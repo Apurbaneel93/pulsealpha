@@ -39,7 +39,9 @@ export function PulseApp() {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const inflight = useRef<AbortController | null>(null);
   const settingsRef = useRef<Settings>(DEFAULT_SETTINGS);
+  const ownerRef = useRef(false);
   const lastRunRef = useRef(0);
+  const owner = config?.owner === true;
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -52,11 +54,14 @@ export function PulseApp() {
   }, []);
 
   /**
-   * Live without a personal key → GET the shared scan (served from the server cache).
-   * Demo mode or a personal Gemini key → POST, which still reuses cached market data.
+   * Everyone: GET the shared scan (served from the server cache).
+   * Signed-in owner with demo mode, a personal Gemini key or a model override:
+   * POST, which the server only accepts with the owner cookie. Visitors never
+   * send a key, so stale owner settings in their browser are ignored.
    */
   const runScan = useCallback(
-    async (s: Settings) => {
+    async (requested: Settings) => {
+      const s = ownerRef.current ? requested : DEFAULT_SETTINGS;
       inflight.current?.abort();
       const ctrl = new AbortController();
       inflight.current = ctrl;
@@ -67,14 +72,22 @@ export function PulseApp() {
         const shared = s.mode === "live" && !s.geminiKey && !s.model;
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (s.geminiKey) headers["x-gemini-key"] = s.geminiKey;
-        const res = shared
-          ? await fetch("/api/scan", { cache: "no-store", signal: ctrl.signal })
+        const getShared = () => fetch("/api/scan", { cache: "no-store", signal: ctrl.signal });
+        let res = shared
+          ? await getShared()
           : await fetch("/api/scan", {
               method: "POST",
               headers,
               body: JSON.stringify({ mode: s.mode, model: s.model || undefined }),
               signal: ctrl.signal,
             });
+        if (res.status === 401 && !shared) {
+          // Owner session expired or the passcode was changed: carry on as a visitor.
+          ownerRef.current = false;
+          setConfig((c) => (c ? { ...c, owner: false, hasServerKey: false } : c));
+          setTab((t) => (t === "setup" ? "picks" : t));
+          res = await getShared();
+        }
         const data: unknown = await res.json().catch(() => null);
         if (!res.ok || !isScan(data)) {
           throw new Error(isApiError(data) ? data.error : `Server responded ${res.status}`);
@@ -94,9 +107,11 @@ export function PulseApp() {
     [adopt],
   );
 
-  // Boot: paint the last scan instantly, then refresh. A live refresh is cheap —
-  // the server answers from its shared cache unless the data is due.
+  // Boot: paint the last scan instantly, then find out whether this browser is
+  // the signed-in owner and refresh. A live refresh is cheap — the server
+  // answers from its shared cache unless the data is due.
   useEffect(() => {
+    let cancelled = false;
     const s = loadSettings();
     settingsRef.current = s;
     setSettings(s);
@@ -104,14 +119,27 @@ export function PulseApp() {
     const cached = loadLastScan();
     if (cached && cached.mode === s.mode) setScan(cached);
 
-    fetch("/api/config", { cache: "no-store" })
-      .then((r) => (r.ok ? (r.json() as Promise<ServerConfig>) : null))
-      .then(setConfig)
-      .catch(() => setConfig(null));
-
-    const demoIsFresh =
-      s.mode === "demo" && cached?.mode === "demo" && istDateKey(new Date(cached.scanned_at_iso)) === istDateKey(new Date());
-    if (!demoIsFresh) void runScan(s);
+    void (async () => {
+      let cfg: ServerConfig | null = null;
+      try {
+        const r = await fetch("/api/config", { cache: "no-store" });
+        if (r.ok) cfg = (await r.json()) as ServerConfig;
+      } catch {
+        /* offline or blocked: carry on as a visitor */
+      }
+      if (cancelled) return;
+      ownerRef.current = cfg?.owner === true;
+      setConfig(cfg);
+      const effective = ownerRef.current ? s : DEFAULT_SETTINGS;
+      const demoIsFresh =
+        effective.mode === "demo" &&
+        cached?.mode === "demo" &&
+        istDateKey(new Date(cached.scanned_at_iso)) === istDateKey(new Date());
+      if (!demoIsFresh) void runScan(s);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [runScan]);
 
   // Stay current without a manual tap: refresh when the app comes back to the
@@ -129,7 +157,8 @@ export function PulseApp() {
       if (e.persisted) maybeRefresh(60_000);
     };
     const timer = window.setInterval(() => {
-      if (settingsRef.current.mode === "live" && isNseSessionOpen(new Date())) maybeRefresh(175_000);
+      const live = !ownerRef.current || settingsRef.current.mode === "live";
+      if (live && isNseSessionOpen(new Date())) maybeRefresh(175_000);
     }, 30_000);
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("pageshow", onPageShow);
@@ -150,6 +179,19 @@ export function PulseApp() {
     [settings.mode, runScan],
   );
 
+  const signOut = useCallback(async () => {
+    try {
+      await fetch("/api/owner", { method: "DELETE" });
+    } catch {
+      /* the cookie is checked server-side on every request regardless */
+    }
+    ownerRef.current = false;
+    setConfig((c) => (c ? { ...c, owner: false, hasServerKey: false } : c));
+    setTab("picks");
+    window.scrollTo({ top: 0 });
+    void runScan(DEFAULT_SETTINGS);
+  }, [runScan]);
+
   const changeTab = useCallback((t: Tab) => {
     setTab(t);
     window.scrollTo({ top: 0 });
@@ -165,7 +207,13 @@ export function PulseApp() {
       />
       <main className="pb-[calc(5.5rem+env(safe-area-inset-bottom))]">
         {tab === "picks" ? (
-          <PicksFeed scan={scan} scanning={scanning} error={error} onScan={() => void runScan(settings)} />
+          <PicksFeed
+            scan={scan}
+            scanning={scanning}
+            error={error}
+            onScan={() => void runScan(settings)}
+            showOwnerLink={config?.ownerEnabled === true && !owner}
+          />
         ) : tab === "history" ? (
           <HistoryView
             entries={history}
@@ -175,11 +223,11 @@ export function PulseApp() {
             }}
             onGoToPicks={() => changeTab("picks")}
           />
-        ) : (
-          <SetupView settings={settings} config={config} onChange={updateSettings} />
-        )}
+        ) : owner ? (
+          <SetupView settings={settings} config={config} onChange={updateSettings} onSignOut={() => void signOut()} />
+        ) : null}
       </main>
-      <BottomNav tab={tab} onChange={changeTab} />
+      <BottomNav tab={tab} onChange={changeTab} owner={owner} />
     </div>
   );
 }

@@ -2,13 +2,20 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ApiError as GenAiError } from "@google/genai";
 import { errorMessage } from "@/lib/async";
 import { DEFAULT_MODEL, verifyGeminiKey } from "@/lib/gemini";
+import { isOwnerRequest, isSameOrigin } from "@/lib/owner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 20;
 
-/** Round-trips a one-word prompt so the API Setup tab can confirm a key works. */
+/**
+ * Owner-only: round-trips a one-word prompt so the API Setup tab can confirm a
+ * key works. Without the owner check this would let anyone test stolen keys
+ * through this server, or burn the server's own key.
+ */
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!isSameOrigin(req)) return NextResponse.json({ ok: false, error: "Cross-site request refused." }, { status: 403 });
+  if (!isOwnerRequest(req)) return NextResponse.json({ ok: false, error: "Owner sign-in required." }, { status: 401 });
   const key = req.headers.get("x-gemini-key")?.trim() || process.env.GEMINI_API_KEY?.trim();
   if (!key) return NextResponse.json({ ok: false, error: "No key provided." }, { status: 400 });
   let model: string | undefined;

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 3124;
+const OWNER_PASS = "correct horse battery staple 42";
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = mkdtempSync(path.join(tmpdir(), "pulsealpha-cache-"));
 const LOG = path.join(dir, "upstream.log");
@@ -38,6 +39,7 @@ async function startServer() {
       MOCK_UPSTREAM: "1",
       MOCK_UPSTREAM_LOG: LOG,
       GEMINI_API_KEY: "server-test-key",
+      OWNER_PASSCODE: OWNER_PASS,
       NODE_OPTIONS: `--import ${path.join(root, "scripts/mock-upstream.mjs")}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -61,6 +63,18 @@ async function stopServer(child) {
   await new Promise((r) => child.once("exit", r));
 }
 
+// POST /api/scan and /api/verify are owner-only; sign in once per server process.
+let ownerCookie = "";
+async function signIn() {
+  const res = await fetch(`${BASE}/api/owner`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ passcode: OWNER_PASS }),
+  });
+  assert.equal(res.status, 200, "owner sign-in");
+  ownerCookie = res.headers.getSetCookie().find((c) => c.startsWith("pa_owner=")).split(";")[0];
+}
+
 let requests = 0;
 async function call(label, init) {
   requests++;
@@ -79,11 +93,12 @@ async function call(label, init) {
   return { body, delta };
 }
 
-const post = (body, headers = {}) => ({ method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+const post = (body, headers = {}) => ({ method: "POST", headers: { "content-type": "application/json", cookie: ownerCookie, ...headers }, body: JSON.stringify(body) });
 
 let server = await startServer();
 try {
   console.log("Server cache test (next start, mocked upstream)\n");
+  await signIn();
   const first = await call("GET  /api/scan   (cold)", undefined);
   assert.equal(first.body.simulated, false);
   assert.equal(first.body.cache.market, "miss");
@@ -121,7 +136,7 @@ try {
   for (const label of ["GET  /api/verify   (cold)", "GET  /api/verify   (warm)"]) {
     const before = counts();
     const t0 = performance.now();
-    const res = await fetch(`${BASE}/api/verify`);
+    const res = await fetch(`${BASE}/api/verify`, { headers: { cookie: ownerCookie } });
     const body = await res.json();
     const d = counts().yahoo - before.yahoo;
     assert.equal(res.status, 200, JSON.stringify(body).slice(0, 300));

@@ -2,7 +2,7 @@
   "name": "pulsealpha",
   "version": "1.0.0",
   "private": true,
-  "description": "PulseAlpha \u2014 mobile-first PWA that surfaces 2\u20133 bullish NSE setups a day with ATR-based levels.",
+  "description": "PulseAlpha — mobile-first PWA that surfaces 2–3 bullish NSE setups a day with ATR-based levels.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +11,9 @@
     "test": "tsx scripts/test-indicators.ts",
     "test:live": "tsx --conditions=react-server scripts/test-live-path.ts",
     "test:cache": "node scripts/test-cache.mjs",
-    "verify": "tsx --conditions=react-server scripts/verify/run.ts"
+    "verify": "tsx --conditions=react-server scripts/verify/run.ts",
+    "test:owner": "tsx --conditions=react-server scripts/test-owner.ts",
+    "test:access": "node scripts/test-access.mjs"
   },
   "dependencies": {
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",

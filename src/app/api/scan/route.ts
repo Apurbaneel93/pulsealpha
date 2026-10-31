@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { errorMessage } from "@/lib/async";
+import { isOwnerRequest, isSameOrigin } from "@/lib/owner";
 import { scan } from "@/lib/scan-service";
 import type { ApiError, DataMode, ScanRequestBody, ScanResult } from "@/lib/types";
 
@@ -31,11 +32,18 @@ export async function GET(): Promise<NextResponse<ScanResult | ApiError>> {
 }
 
 /**
- * "Scan Market Now". Body: { mode?: "live" | "demo", model?: string }.
- * An optional `x-gemini-key` header evaluates with the user's own key; market
- * data still comes from the shared cache.
+ * Owner-only. Body: { mode?: "live" | "demo", model?: string }.
+ * An optional `x-gemini-key` header evaluates with the owner's own key; market
+ * data still comes from the shared cache. Everyone else uses GET above, so no
+ * visitor can spend a key, pick a model or reach demo mode.
  */
 export async function POST(req: NextRequest): Promise<NextResponse<ScanResult | ApiError>> {
+  if (!isSameOrigin(req)) {
+    return NextResponse.json({ error: "Cross-site request refused." }, { status: 403, headers: NO_STORE });
+  }
+  if (!isOwnerRequest(req)) {
+    return NextResponse.json({ error: "Owner sign-in required." }, { status: 401, headers: NO_STORE });
+  }
   let body: ScanRequestBody = {};
   try {
     const text = await req.text();

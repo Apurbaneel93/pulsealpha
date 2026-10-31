@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CircleAlert, Eye, EyeOff, LoaderCircle, Radio, FlaskConical } from "lucide-react";
+import { Check, CircleAlert, Eye, EyeOff, FlaskConical, LoaderCircle, LogOut, Radio, ShieldCheck } from "lucide-react";
 import type { Settings } from "@/lib/client-store";
 import type { DataMode, ServerConfig } from "@/lib/types";
 
@@ -9,6 +9,7 @@ interface Props {
   settings: Settings;
   config: ServerConfig | null;
   onChange: (next: Settings) => void;
+  onSignOut: () => void;
 }
 
 type Verify = { state: "idle" } | { state: "busy" } | { state: "ok"; text: string } | { state: "error"; text: string };
@@ -28,7 +29,7 @@ const MODES: ReadonlyArray<{ id: DataMode; title: string; body: string; icon: ty
   },
 ];
 
-export function SetupView({ settings, config, onChange }: Props) {
+export function SetupView({ settings, config, onChange, onSignOut }: Props) {
   const [draftKey, setDraftKey] = useState(settings.geminiKey);
   const [draftModel, setDraftModel] = useState(settings.model);
   const [reveal, setReveal] = useState(false);
@@ -69,6 +70,21 @@ export function SetupView({ settings, config, onChange }: Props) {
     <section className="px-4 pt-5">
       <h1 className="text-[21px] font-semibold leading-tight tracking-[-0.01em] text-fg">API Setup</h1>
       <p className="mt-1 text-[13px] text-muted">Choose the data source and connect Gemini for AI evaluation.</p>
+
+      <div className="mt-4 flex items-center gap-3 rounded-xl border border-bull/30 bg-bull/[0.07] px-3.5 py-3">
+        <ShieldCheck size={18} className="shrink-0 text-bull" aria-hidden />
+        <p className="min-w-0 flex-1 text-[12.5px] leading-snug text-fg">
+          Owner mode. Only you can see this tab; visitors get the shared scan only.
+        </p>
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12.5px] font-semibold text-fg"
+        >
+          <LogOut size={13} aria-hidden />
+          Sign out
+        </button>
+      </div>
 
       <div className="mt-4 rounded-t-3xl rounded-b-2xl border border-line/80 bg-panel px-4 pb-5 pt-2.5">
         <div className="mx-auto h-1 w-10 rounded-full bg-line" aria-hidden />
@@ -113,8 +129,9 @@ export function SetupView({ settings, config, onChange }: Props) {
             Gemini API key
           </label>
           <p className="mt-0.5 text-[12.5px] leading-snug text-muted">
-            Stored only in this browser and sent with each scan to this app&apos;s own server. Get one at
-            aistudio.google.com/apikey.
+            Optional. The safest place for your key is GEMINI_API_KEY in Vercel, where it never touches a browser. A key
+            pasted here stays on this device and is sent only to this app&apos;s own server, and only while you are
+            signed in. Get one at aistudio.google.com/apikey.
           </p>
           <div className="mt-2.5 flex items-center rounded-xl border border-line bg-ink/60 focus-within:border-bull/60">
             <input
@@ -207,21 +224,11 @@ export function SetupView({ settings, config, onChange }: Props) {
           </p>
         </div>
 
-        <div className="mt-6 border-t border-line pt-5">
-          <h2 className="text-[14px] font-semibold text-fg">How picks are made</h2>
-          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-[12.5px] leading-snug text-muted marker:text-faint">
-            <li>Overnight S&amp;P 500, Nasdaq and the Nifty 50 set the market regime.</li>
-            <li>Each stock must trade above its 20-EMA with RSI 55–72 and volume above 1.5x its 20-day average.</li>
-            <li>Survivors get the last 24 hours of Google News headlines.</li>
-            <li>Gemini ranks the top 2–3 without ever seeing or writing a price.</li>
-            <li>Code sets the buy zone (price to +0.15 ATR), target (+2.5 ATR) and stop-loss (−1.5 ATR).</li>
-          </ol>
-          <p className="mt-3 text-[12px] leading-snug text-faint">
-            Market data is cached on the server and shared by everyone for{" "}
-            {Math.round((config?.marketRefreshSeconds ?? 180) / 60)} minutes, so opening the app is instant and Yahoo
-            isn&apos;t hit on every tap. Signal History stays on this device.
-          </p>
-        </div>
+        <p className="mt-6 border-t border-line pt-4 text-[12px] leading-snug text-faint">
+          Market data is cached on the server and shared by everyone for{" "}
+          {Math.round((config?.marketRefreshSeconds ?? 180) / 60)} minutes, so opening the app is instant and Yahoo
+          isn&apos;t hit on every tap. Signal History stays on each visitor&apos;s own device.
+        </p>
       </div>
     </section>
   );

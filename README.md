@@ -20,13 +20,16 @@ Open it on your phone (same Wi-Fi, `http://<your-ip>:3000`) or deploy and use **
 Out of the box, with no keys:
 
 - **Live mode** scans real Yahoo Finance data and ranks with the deterministic rules engine.
-- Add a Gemini key in the **API Setup** tab (or set `GEMINI_API_KEY`) to switch ranking and the research write-up to Gemini.
-- **Demo mode** loads instantly with simulated prices.
+- Set `GEMINI_API_KEY` to switch ranking and the research write-up to Gemini. Everyone who opens the site sees the same shared scan.
+- Set `OWNER_PASSCODE` to unlock the owner-only **API Setup** tab (personal key, model, demo mode) on your own devices. Visitors never see it.
 
 ## Deploy to Vercel
 
 1. Push to GitHub and import into Vercel. No database, storage or integration to add.
-2. Optionally set `GEMINI_API_KEY` (and `GEMINI_MODEL`).
+2. Set these in Vercel → Settings → Environment Variables (never in the repo, never in chat):
+   - `GEMINI_API_KEY` (optional): the Gemini key.
+   - `OWNER_PASSCODE` (recommended): 12+ characters, ideally 20+ from a password manager. Without it nobody can sign in as owner and the API Setup tab stays hidden for everyone.
+   - `GEMINI_MODEL` (optional).
 3. `vercel.json` calls `GET /api/scan` at **03:00 UTC = 08:30 IST, Mon–Fri**, which fills the cache before anyone opens the app.
 
 That's it. Vercel provides the cache that `unstable_cache` writes to and shares it across every serverless instance automatically.
@@ -90,10 +93,23 @@ Stored only in the browser (`localStorage`, up to 300 rows). Each stock is logge
 | Route | Purpose |
 |---|---|
 | `GET /api/scan` | The shared live scan (server key or rules engine), from cache when warm. Also the cron target. |
-| `POST /api/scan` | Body `{ mode?: "live" \| "demo", model?: string }`, optional header `x-gemini-key`. |
-| `GET /api/verify` | Accuracy report: filter funnel, raw sessions for cross-checking, ~9-month replay vs baseline. Cached per IST day. |
-| `GET /api/config` | Capability flags only (never secrets). |
-| `POST /api/verify-key` | One-word Gemini round-trip for the "Test key" button. |
+| `POST /api/scan` | **Owner only.** Body `{ mode?: "live" \| "demo", model?: string }`, optional header `x-gemini-key`. |
+| `GET /api/verify` | **Owner only.** Accuracy report: filter funnel, raw sessions for cross-checking, ~9-month replay vs baseline. Cached per IST day. |
+| `GET /api/config` | Capability flags only (never secrets). Server-key status is shown to the owner alone. |
+| `POST /api/verify-key` | **Owner only.** One-word Gemini round-trip for the "Test key" button. |
+| `GET` / `POST` / `DELETE /api/owner` | Session status / sign in with `{ passcode }` / sign out. |
+
+## Security
+
+The site is public; the owner's controls are not. Every owner-only route checks the session on the server, so hiding the tab is a courtesy, not the protection.
+
+- **Owner session**: `OWNER_PASSCODE` lives only in Vercel's environment. Signing in sets an `HttpOnly`, `Secure`, `SameSite=Strict` cookie holding an expiry and an HMAC of it (key derived from the passcode with scrypt). Page scripts can't read it, other sites can't send it, and it can't be forged without the passcode. Sessions last 30 days; changing `OWNER_PASSCODE` signs every device out.
+- **What visitors can do**: read the shared, cached scan (`GET /api/scan`). They can't spend a Gemini key, choose a model, run demo mode, test keys or trigger the 9-month accuracy replay. Opening the site more often never causes more Gemini calls: results are cached on the server.
+- **Guessing**: a wrong passcode costs half a second, five misses lock that IP for 15 minutes, and a long passcode makes guessing hopeless. Add the Vercel Firewall rate-limit rule below for a global cap.
+- **CSRF**: sign-in, sign-out and `POST /api/scan` refuse requests that declare themselves cross-site or carry a foreign `Origin`, on top of `SameSite=Strict`.
+- **Headers** (`next.config.ts`): Content-Security-Policy limiting scripts, requests and framing to this origin, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `COOP`, HSTS.
+- **Secrets**: keys live in Vercel environment variables only. `.env*` files are git-ignored, `/api/config` never returns a secret, and the server key is never sent to a browser.
+- **Rate limit**: in Vercel → Project → Firewall → Add rule, match path `/api/owner`, action *Rate limit* (e.g. 10 requests per minute per IP). Optionally add a general rule for `/api/` (e.g. 120 per minute per IP).
 
 ## Check accuracy on real data before going live
 
@@ -119,6 +135,9 @@ npm run test:live    # full live pipeline with Yahoo, Google News and Gemini moc
 npm run build && npm run test:cache
                      # real `next start` + mocked upstream: counts upstream calls across requests and a restart
 CACHE_TEST_REVALIDATE=1 npm run test:cache   # also waits out the 180 s window (~3 min)
+npm run test:owner   # owner-mode primitives: tokens, expiry, forgery, passcode rotation, CSRF guard, lockout
+npm run build && npm run test:access
+                     # real `next start`: visitor vs owner vs forged cookies on every route, headers, brute force
 npm run typecheck
 ```
 
@@ -128,6 +147,6 @@ npm run typecheck
 - NSE exchange holidays aren't modelled; on a holiday the scan reflects the last completed session.
 - Edit the universe in `src/lib/watchlist.ts`. Symbols that fail to load are skipped.
 - Self-hosting with `next start` uses the local filesystem cache in `.next/cache`, shared by that one server. Running several servers needs a shared [cache handler](https://nextjs.org/docs/app/api-reference/config/next-config-js/incrementalCacheHandlerPath); Vercel needs nothing.
-- The Gemini key typed in API Setup lives in that browser's localStorage and is sent to your own `/api/scan` on each request. For a shared deployment, prefer the `GEMINI_API_KEY` env var.
+- A Gemini key typed in API Setup (owner only) lives in that browser's localStorage and is sent to your own `/api/scan` on each request. Prefer the `GEMINI_API_KEY` env var: it never reaches a browser.
 
 **Disclaimer:** PulseAlpha is a screening tool for research and education. It is not investment advice and not a SEBI-registered research service. If you plan to share its picks publicly in India, check SEBI's Research Analyst and finfluencer rules first.

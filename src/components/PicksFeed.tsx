@@ -2,6 +2,7 @@
 
 import { CircleAlert, Clock, FlaskConical, RefreshCw, SearchX } from "lucide-react";
 import { BoardSection } from "./BoardSection";
+import { HowItWorks } from "./HowItWorks";
 import { PickCard } from "./PickCard";
 import { signedPct } from "@/lib/format";
 import { formatDayHeading, istDateKey, isNseSessionOpen } from "@/lib/time";
@@ -12,6 +13,8 @@ interface Props {
   scanning: boolean;
   error: string | null;
   onScan: () => void;
+  /** Owner sign-in is configured and this visitor isn't signed in: show the quiet footer link. */
+  showOwnerLink: boolean;
 }
 
 function SkeletonCard() {
@@ -67,7 +70,7 @@ function engineLabel(scan: ScanResult): string {
   return "Ranked by the rules engine";
 }
 
-export function PicksFeed({ scan, scanning, error, onScan }: Props) {
+export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink }: Props) {
   const showSkeleton = scanning && !scan;
   const isDemo = scan?.mode === "demo";
   const isSimulated = scan?.simulated === true;
@@ -167,10 +170,20 @@ export function PicksFeed({ scan, scanning, error, onScan }: Props) {
         />
       ) : null}
 
+      <HowItWorks />
+
       <p className="mt-6 pb-2 text-[11.5px] leading-relaxed text-faint">
         PulseAlpha is a screening tool for research and education, not investment advice or a SEBI-registered research
         service. Setups can fail; size positions so a stop-loss hit is affordable, and verify prices with your broker
         before trading.
+        {showOwnerLink ? (
+          <>
+            {" "}
+            <a href="/owner" className="underline decoration-line underline-offset-2">
+              Owner sign-in
+            </a>
+          </>
+        ) : null}
       </p>
     </section>
   );

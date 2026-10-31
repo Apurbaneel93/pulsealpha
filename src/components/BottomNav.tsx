@@ -10,14 +10,16 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: "setup", label: "API Setup", icon: KeyRound },
 ];
 
-export function BottomNav({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
+/** The API Setup tab exists only for a signed-in owner; everyone else gets two tabs. */
+export function BottomNav({ tab, onChange, owner }: { tab: Tab; onChange: (t: Tab) => void; owner: boolean }) {
+  const tabs = owner ? TABS : TABS.filter((t) => t.id !== "setup");
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md border-t border-line/80 bg-ink/95 pb-safe backdrop-blur-md"
       aria-label="Primary"
     >
-      <ul className="grid grid-cols-3">
-        {TABS.map(({ id, label, icon: Icon }) => {
+      <ul className={`grid ${owner ? "grid-cols-3" : "grid-cols-2"}`}>
+        {tabs.map(({ id, label, icon: Icon }) => {
           const active = id === tab;
           return (
             <li key={id}>

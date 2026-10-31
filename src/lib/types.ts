@@ -224,6 +224,11 @@ export interface HistoryEntry {
 }
 
 export interface ServerConfig {
+  /** This browser holds a valid owner session. */
+  owner: boolean;
+  /** OWNER_PASSCODE is configured on the server, so sign-in is possible. */
+  ownerEnabled: boolean;
+  /** Only ever true for the owner. */
   hasServerKey: boolean;
   defaultModel: string;
   /** Market data cache lifetime (unstable_cache revalidate), seconds. */
