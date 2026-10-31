@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brief-specified palette */
+  --color-ink: #090d16;
+  --color-panel: #131b2e;
+  --color-bull: #10b981;
+  --color-bear: #f43f5e;
+  /* Supporting tones */
+  --color-panel-2: #18223a;
+  --color-line: #222d47;
+  --color-fg: #e8edf7;
+  --color-muted: #8a96b3;
+  --color-faint: #5d6886;
+  --color-paper: #eef2f8;
+  --color-caution: #f2b84b;
+
+  --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-ticker: "Barlow Condensed", "Arial Narrow", ui-sans-serif, sans-serif;
+
+  --animate-sweep: sweep 1.4s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  --animate-rise: rise 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  @keyframes sweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: var(--color-ink);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html,
+  body {
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+  }
+  body {
+    background: var(--color-ink);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100dvh;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-bull);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  button {
+    cursor: pointer;
+  }
+  input::placeholder {
+    color: var(--color-faint);
+  }
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Lining, proportional figures. Schibsted's tabular set also widens commas,
+   periods and colons, which reads as broken spacing in prices and times. */
+@utility num {
+  font-variant-numeric: lining-nums proportional-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

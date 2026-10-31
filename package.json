@@ -1,0 +1,39 @@
+{
+  "name": "pulsealpha",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PulseAlpha \u2014 mobile-first PWA that surfaces 2\u20133 bullish NSE setups a day with ATR-based levels.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/test-indicators.ts",
+    "test:live": "tsx --conditions=react-server scripts/test-live-path.ts",
+    "test:cache": "node scripts/test-cache.mjs",
+    "verify": "tsx --conditions=react-server scripts/verify/run.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/schibsted-grotesk": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@google/genai": "^2.32.0",
+    "lucide-react": "^1.66.0",
+    "next": "16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1",
+    "yahoo-finance2": "^4.0.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.2.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.9"
+  }
+}
