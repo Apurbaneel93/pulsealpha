@@ -38,10 +38,13 @@
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
   }
+  /* `clip`, not `hidden`: hidden on both html and body turns <body> into its
+     own (empty) scroll container, and with overscroll-behavior: none the
+     swipe never reaches the page — mobile scrolling dies. clip prevents
+     sideways overflow without creating a scroll container. */
   html,
   body {
-    overflow-x: hidden;
-    overscroll-behavior-y: none;
+    overflow-x: clip;
   }
   body {
     background: var(--color-ink);
