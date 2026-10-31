@@ -38,7 +38,7 @@ const cachedMarketData = unstable_cache(
     void istDay;
     return loadLiveMarketData(new Date());
   },
-  ["pulsealpha:market-data:v1"],
+  ["pulsealpha:market-data:v2"],
   { revalidate: MARKET_REVALIDATE_SECONDS, tags: [CACHE_TAGS.market] },
 );
 

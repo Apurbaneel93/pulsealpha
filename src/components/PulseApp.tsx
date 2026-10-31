@@ -18,7 +18,7 @@ import {
   scanToHistory,
   type Settings,
 } from "@/lib/client-store";
-import { istDateKey } from "@/lib/time";
+import { istDateKey, isNseSessionOpen } from "@/lib/time";
 import type { ApiError, HistoryEntry, ScanResult, ServerConfig } from "@/lib/types";
 
 function isApiError(v: unknown): v is ApiError {
@@ -38,6 +38,12 @@ export function PulseApp() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const inflight = useRef<AbortController | null>(null);
+  const settingsRef = useRef<Settings>(DEFAULT_SETTINGS);
+  const lastRunRef = useRef(0);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   const adopt = useCallback((result: ScanResult) => {
     setScan(result);
@@ -54,6 +60,7 @@ export function PulseApp() {
       inflight.current?.abort();
       const ctrl = new AbortController();
       inflight.current = ctrl;
+      lastRunRef.current = Date.now();
       setScanning(true);
       setError(null);
       try {
@@ -91,6 +98,7 @@ export function PulseApp() {
   // the server answers from its shared cache unless the data is due.
   useEffect(() => {
     const s = loadSettings();
+    settingsRef.current = s;
     setSettings(s);
     setHistory(loadHistory());
     const cached = loadLastScan();
@@ -104,6 +112,32 @@ export function PulseApp() {
     const demoIsFresh =
       s.mode === "demo" && cached?.mode === "demo" && istDateKey(new Date(cached.scanned_at_iso)) === istDateKey(new Date());
     if (!demoIsFresh) void runScan(s);
+  }, [runScan]);
+
+  // Stay current without a manual tap: refresh when the app comes back to the
+  // foreground (tab switch, phone unlock, home-screen app resumed) and, while
+  // it stays open during NSE hours, about every 3 minutes — the server's
+  // market-data cache window, so this never adds load on Yahoo.
+  useEffect(() => {
+    const maybeRefresh = (minGapMs: number) => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRunRef.current < minGapMs) return;
+      void runScan(settingsRef.current);
+    };
+    const onVisible = () => maybeRefresh(60_000);
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) maybeRefresh(60_000);
+    };
+    const timer = window.setInterval(() => {
+      if (settingsRef.current.mode === "live" && isNseSessionOpen(new Date())) maybeRefresh(175_000);
+    }, 30_000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, [runScan]);
 
   const updateSettings = useCallback(

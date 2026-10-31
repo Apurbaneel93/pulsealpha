@@ -70,6 +70,20 @@ async function main() {
   assert.ok(a.picks.length >= 2 && a.picks.length <= 3);
   console.log(`  rules engine picks: ${a.picks.map((p) => p.symbol).join(", ")}`);
 
+  // Full bullish ranking
+  const board = a.board ?? [];
+  assert.ok(board.length > 0, "board present");
+  assert.ok(board.every((r) => r.checks.trend && r.pct_above_ema20 > 0), "board lists only stocks above their 20-EMA");
+  for (let i = 1; i < board.length; i++) {
+    const p = board[i - 1]!;
+    const c = board[i]!;
+    assert.ok(p.passed > c.passed || (p.passed === c.passed && p.score >= c.score), "board sorted by checks, then score");
+  }
+  assert.equal(board.filter((r) => r.passed === 3).length, a.shortlist_size, "full setups on the board = stocks passing the filter");
+  assert.ok(a.picks.every((p) => board.some((r) => r.symbol === p.symbol)), "every pick appears on the board");
+  assert.equal(a.board_scanned, md.scanned);
+  console.log(`  board: ${board.length} of ${a.board_scanned} above 20-EMA; top 5 ${board.slice(0, 5).map((r) => `${r.symbol}(${r.passed}/3,${r.score})`).join(" ")}`);
+
   // A failing feed falls back to clearly-flagged simulated data.
   const down: Deps = { ...direct, getLiveMarketData: async () => Promise.reject(new Error("Yahoo Finance rate-limited this server")) };
   const sim = await runScan({ mode: "live", now: NOW }, down);

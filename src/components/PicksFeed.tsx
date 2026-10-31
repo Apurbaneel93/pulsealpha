@@ -1,8 +1,10 @@
 "use client";
 
-import { CircleAlert, FlaskConical, RefreshCw, SearchX } from "lucide-react";
+import { CircleAlert, Clock, FlaskConical, RefreshCw, SearchX } from "lucide-react";
+import { BoardSection } from "./BoardSection";
 import { PickCard } from "./PickCard";
 import { signedPct } from "@/lib/format";
+import { formatDayHeading, istDateKey, isNseSessionOpen } from "@/lib/time";
 import type { ScanResult } from "@/lib/types";
 
 interface Props {
@@ -44,6 +46,19 @@ function IndexStrip({ scan }: { scan: ScanResult }) {
   );
 }
 
+/** Which NSE session the data reflects, in plain words. */
+function sessionNote(scan: ScanResult, now = new Date()): string {
+  const nifty = scan.market.indices.find((i) => i.symbol === "^NSEI");
+  const session = nifty ? new Date(nifty.sessionDate) : new Date(scan.scanned_at_iso);
+  const sessionIsToday = istDateKey(session) === istDateKey(now);
+  if (isNseSessionOpen(now)) {
+    return sessionIsToday
+      ? "NSE is open. Prices are live and can lag the exchange by a few minutes."
+      : `No trading data for today yet (holiday or delayed feed). Showing the ${formatDayHeading(session)} session.`;
+  }
+  return `NSE is closed. Showing the ${formatDayHeading(session)} session.`;
+}
+
 function engineLabel(scan: ScanResult): string {
   if (scan.engine === "gemini") {
     const m = scan.model ?? "Gemini";
@@ -72,6 +87,13 @@ export function PicksFeed({ scan, scanning, error, onScan }: Props) {
           {scanning ? "Reading global cues and scanning the watchlist…" : "Run a scan to see today's setups."}
         </p>
       )}
+
+      {scan && !isDemo ? (
+        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted">
+          <Clock size={13} className="shrink-0" aria-hidden />
+          {sessionNote(scan)}
+        </p>
+      ) : null}
 
       {scan ? <IndexStrip scan={scan} /> : null}
 
@@ -136,6 +158,14 @@ export function PicksFeed({ scan, scanning, error, onScan }: Props) {
           </div>
         ) : null}
       </div>
+
+      {scan?.board && scan.board.length > 0 ? (
+        <BoardSection
+          board={scan.board}
+          scanned={scan.board_scanned ?? scan.universe_size}
+          pickSymbols={new Set(scan.picks.map((p) => p.symbol))}
+        />
+      ) : null}
 
       <p className="mt-6 pb-2 text-[11.5px] leading-relaxed text-faint">
         PulseAlpha is a screening tool for research and education, not investment advice or a SEBI-registered research

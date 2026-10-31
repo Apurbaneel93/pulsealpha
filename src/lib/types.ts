@@ -149,6 +149,30 @@ export interface MarketSnapshot {
   shortlist: TechnicalSnapshot[];
   /** Last-24h headlines per shortlisted symbol. Empty in demo/simulated data. */
   news: Record<string, NewsItem[]>;
+  /** Stocks with usable data this scan (denominator for the board). */
+  scanned: number;
+  /** Every stock above its 20-EMA, ranked: checks passed, then score. */
+  board: BoardRow[];
+}
+
+/** One row of the full bullish ranking: every scanned stock trading above its 20-EMA. */
+export interface BoardRow {
+  symbol: string;
+  name: string;
+  sector: Sector;
+  price: number;
+  change_pct: number;
+  rsi14: number;
+  volume_ratio: number;
+  pct_above_ema20: number;
+  ema20_above_ema50: boolean;
+  atr14: number;
+  /** The three hard-filter checks. `trend` is always true on the board. */
+  checks: { trend: boolean; rsi: boolean; volume: boolean };
+  /** How many of the three checks pass (3 = a full setup). */
+  passed: number;
+  /** Rules-engine bullish score, 1–99. */
+  score: number;
 }
 
 export type CacheStatus = "hit" | "miss" | "stale";
@@ -169,6 +193,9 @@ export interface ScanResult {
   universe_size: number;
   shortlist_size: number;
   picks: Pick[];
+  /** Full bullish ranking (may be absent on scans saved by older versions). */
+  board?: BoardRow[];
+  board_scanned?: number;
   /** Server cache status for live scans; null for demo/simulated. */
   cache: { market: CacheStatus; ai: CacheStatus | null; refresh_seconds: number } | null;
   duration_ms: number;

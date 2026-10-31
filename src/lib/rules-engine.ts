@@ -3,7 +3,7 @@
  * the AI call fails, in demo mode, and to sanitise or top-up AI output.
  */
 import { NASDAQ_SENSITIVE } from "./watchlist";
-import type { MarketCues, NewsItem, ResearchBreakdown, TechnicalSnapshot } from "./types";
+import type { BoardRow, MarketCues, NewsItem, ResearchBreakdown, TechnicalSnapshot } from "./types";
 
 export const HARD_FILTER = {
   rsiMin: 55,
@@ -105,4 +105,37 @@ export function rankByRules(
       conviction: convictionScore(snapshot, market, newsBySymbol.get(snapshot.symbol)?.length ?? 0),
     }))
     .sort((a, b) => b.conviction - a.conviction || b.snapshot.volume_ratio - a.snapshot.volume_ratio);
+}
+
+/**
+ * Full bullish ranking: every stock trading above its 20-EMA, ordered by how
+ * many of the three hard-filter checks it passes, then by bullish score.
+ * Stocks below the 20-EMA are left out — they are not in an uptrend.
+ */
+export function buildBoard(snapshots: readonly TechnicalSnapshot[], market: MarketCues): BoardRow[] {
+  return snapshots
+    .filter((s) => s.current_price > s.ema20)
+    .map((s): BoardRow => {
+      const checks = {
+        trend: true,
+        rsi: s.rsi14 >= HARD_FILTER.rsiMin && s.rsi14 <= HARD_FILTER.rsiMax,
+        volume: s.volume_ratio > HARD_FILTER.volumeRatioMin,
+      };
+      return {
+        symbol: s.symbol,
+        name: s.name,
+        sector: s.sector,
+        price: s.current_price,
+        change_pct: s.day_change_pct,
+        rsi14: s.rsi14,
+        volume_ratio: s.volume_ratio,
+        pct_above_ema20: Math.round(pctAboveEma20(s) * 100) / 100,
+        ema20_above_ema50: s.ema20 > s.ema50,
+        atr14: s.atr14,
+        checks,
+        passed: 1 + Number(checks.rsi) + Number(checks.volume),
+        score: convictionScore(s, market),
+      };
+    })
+    .sort((a, b) => b.passed - a.passed || b.score - a.score || b.volume_ratio - a.volume_ratio);
 }

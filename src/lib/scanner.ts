@@ -5,7 +5,7 @@ import { buildAiInput, mentionsPrice, type AiEvaluation, type AiInput, type AiPi
 import { computeLevels } from "./levels";
 import { fetchMarketCues, scanUniverse } from "./market-data";
 import { fetchHeadlines } from "./news";
-import { passesHardFilter, rankByRules, rulesBreakdown, rulesCatalyst } from "./rules-engine";
+import { buildBoard, passesHardFilter, rankByRules, rulesBreakdown, rulesCatalyst } from "./rules-engine";
 import { formatDetectedAt } from "./time";
 import { WATCHLIST } from "./watchlist";
 import type {
@@ -52,7 +52,7 @@ export function shortlistFrom(snapshots: readonly TechnicalSnapshot[], market: M
   const shortlist = rankByRules(passed, market, new Map())
     .slice(0, SHORTLIST_CAP)
     .map((r) => r.snapshot);
-  return { passed_count: passed.length, shortlist };
+  return { passed_count: passed.length, shortlist, scanned: snapshots.length, board: buildBoard(snapshots, market) };
 }
 
 /**
@@ -79,7 +79,7 @@ export async function loadLiveMarketData(now = new Date()): Promise<MarketSnapsh
         : `only ${universe.snapshots.length}/${universe.attempted} symbols loaded`;
     throw new LiveFeedError(why, rateLimited);
   }
-  const { passed_count, shortlist } = shortlistFrom(universe.snapshots, marketRes.m);
+  const { passed_count, shortlist, scanned, board } = shortlistFrom(universe.snapshots, marketRes.m);
   const news = shortlist.length ? await loadNews(shortlist, now) : {};
   const fetchedAt = new Date();
   return {
@@ -91,13 +91,15 @@ export async function loadLiveMarketData(now = new Date()): Promise<MarketSnapsh
     passed_count,
     shortlist,
     news,
+    scanned,
+    board,
   };
 }
 
 /** Simulated equivalent of loadLiveMarketData. Pure and instant; never cached or persisted. */
 export function loadDemoMarketData(now = new Date()): MarketSnapshot {
   const demo = buildDemoInputs(now);
-  const { passed_count, shortlist } = shortlistFrom(demo.snapshots, demo.market);
+  const { passed_count, shortlist, scanned, board } = shortlistFrom(demo.snapshots, demo.market);
   return {
     version: `demo-${now.toISOString().slice(0, 10)}`,
     fetched_at_iso: now.toISOString(),
@@ -107,6 +109,8 @@ export function loadDemoMarketData(now = new Date()): MarketSnapshot {
     passed_count,
     shortlist,
     news: {},
+    scanned,
+    board,
   };
 }
 
@@ -260,6 +264,8 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
     universe_size: md.universe_size,
     shortlist_size: md.passed_count,
     picks,
+    board: md.board ?? [],
+    board_scanned: md.scanned ?? md.universe_size - md.failed_symbols,
     cache: isLiveData && marketCache ? { market: marketCache, ai: aiCache, refresh_seconds: deps.marketRefreshSeconds } : null,
     duration_ms: Date.now() - started,
   };
