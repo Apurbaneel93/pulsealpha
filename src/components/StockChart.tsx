@@ -6,11 +6,11 @@ import { plain, signedPct } from "@/lib/format";
 import { formatAxisDate, formatAxisMonth, formatAxisTime, isNseSessionOpen, istDateKey } from "@/lib/time";
 import type { ChartPayload, ChartRange, LiveQuote, PriceLevels } from "@/lib/types";
 
-type Plan = Pick<PriceLevels, "entry_low" | "entry_high" | "target_price" | "stop_loss">;
+type Plan = Pick<PriceLevels, "entry_low" | "entry_high" | "target_1" | "target_2" | "stop_loss">;
 
 interface Props {
   symbol: string;
-  /** Draw the buy zone, target and stop-loss on the chart. */
+  /** Draw the buy zone, both targets and the stop-loss on the chart. */
   levels?: Plan;
   /** Latest quote; extends the 1D line to the current price between chart refreshes. */
   live?: LiveQuote;
@@ -132,7 +132,7 @@ export function StockChart({ symbol, levels, live, height = 172 }: Props) {
     const near = (v: number) => v >= lo0 - span0 * 0.6 && v <= hi0 + span0 * 0.6;
     const shown: number[] = [];
     if (levels) {
-      for (const v of [levels.target_price, levels.stop_loss]) if (near(v)) shown.push(v);
+      for (const v of [levels.target_1, levels.target_2, levels.stop_loss]) if (near(v)) shown.push(v);
       if (near(levels.entry_low) || near(levels.entry_high)) shown.push(levels.entry_low, levels.entry_high);
     }
     const lo1 = Math.min(lo0, ...shown);
@@ -312,7 +312,8 @@ export function StockChart({ symbol, levels, live, height = 172 }: Props) {
               ) : null}
               {levels
                 ? ([
-                    [levels.target_price, "var(--color-bull)", "Target"],
+                    [levels.target_2, "var(--color-bull)", "T2"],
+                    [levels.target_1, "var(--color-bull)", "T1"],
                     [levels.stop_loss, "var(--color-bear)", "Stop"],
                   ] as const).map(([v, color, label]) => {
                     const yy = geo.y(v);
@@ -351,15 +352,17 @@ export function StockChart({ symbol, levels, live, height = 172 }: Props) {
             {/* levels that sit outside the visible price range */}
             {levels
               ? ([
-                  [levels.target_price, "var(--color-bull)", "Target"],
+                  [levels.target_2, "var(--color-bull)", "T2"],
+                  [levels.target_1, "var(--color-bull)", "T1"],
                   [levels.stop_loss, "var(--color-bear)", "Stop"],
-                ] as const).map(([v, color, label]) => {
+                ] as const).map(([v, color, label], idx) => {
                   const yy = geo.y(v);
                   const above = yy < PAD.top;
                   const below = yy > PAD.top + geo.plotH;
                   if (!above && !below) return null;
+                  // Several off-chart labels share an edge, so stack them instead of overprinting.
                   return (
-                    <text key={label} x={PAD.left + geo.plotW - 2} y={above ? PAD.top + 9 : PAD.top + geo.plotH - 3} textAnchor="end" fontSize="10" fill={color} className="num">
+                    <text key={label} x={PAD.left + geo.plotW - 2} y={above ? PAD.top + 9 + idx * 11 : PAD.top + geo.plotH - 3 - (2 - idx) * 11} textAnchor="end" fontSize="10" fill={color} className="num">
                       {above ? "▲" : "▼"} {label} {plain(v)}
                     </text>
                   );

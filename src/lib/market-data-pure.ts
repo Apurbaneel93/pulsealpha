@@ -2,8 +2,8 @@
  * Pure (network-free) pieces of the market-data pipeline, shared by the live
  * Yahoo path, demo mode and tests.
  */
-import { atr, ema, pctChange, rsi, volumeRatio } from "./indicators";
-import { round2 } from "./levels";
+import { atr, ema, pctChange, rsi, sma, volumeRatio } from "./indicators";
+import { openingGapAtr, round2 } from "./levels";
 import type { Candle, IndexCue, MarketCues, Regime, TechnicalSnapshot, WatchlistEntry } from "./types";
 
 export interface Series {
@@ -72,6 +72,7 @@ export function snapshotFromSeries(entry: WatchlistEntry, series: Series): Techn
   const { completed, last, inProgress } = series;
   const closes = completed.map((c) => c.close);
   const volumes = completed.map((c) => c.volume);
+  const sma20 = sma(closes, 20);
   const ema20 = ema(closes, 20);
   const ema50 = ema(closes, 50);
   const rsi14 = rsi(closes, 14);
@@ -79,7 +80,7 @@ export function snapshotFromSeries(entry: WatchlistEntry, series: Series): Techn
   const vol = volumeRatio(volumes, 20);
   const lastCompleted = completed[completed.length - 1];
   const beforeLast = completed[completed.length - 2];
-  if (ema20 == null || ema50 == null || rsi14 == null || atr14 == null || !vol || !lastCompleted || !beforeLast) {
+  if (sma20 == null || ema20 == null || ema50 == null || rsi14 == null || atr14 == null || atr14 <= 0 || !vol || !lastCompleted || !beforeLast) {
     return null;
   }
   const currentPrice = inProgress ? last : lastCompleted.close;
@@ -91,10 +92,17 @@ export function snapshotFromSeries(entry: WatchlistEntry, series: Series): Techn
     current_price: round2(currentPrice),
     prev_close: round2(prevClose),
     day_change_pct: round2(pctChange(prevClose, currentPrice)),
+    sma20: round2(sma20),
     ema20: round2(ema20),
     ema50: round2(ema50),
     rsi14: round2(rsi14),
     atr14: round2(atr14),
+    // Ratios use the unrounded ATR and price, so they match a hand calculation.
+    atr_pct: round2((atr14 / currentPrice) * 100),
+    // "Yesterday" is the last completed session: the range it printed vs. a normal day.
+    coil_ratio: round2((lastCompleted.high - lastCompleted.low) / atr14),
+    sma20_extension_pct: round2(((currentPrice - sma20) / sma20) * 100),
+    opening_gap_atr: round2(openingGapAtr(currentPrice, prevClose, atr14)),
     volume_ratio: round2(vol.ratio),
     latest_volume: Math.round(vol.latest),
     avg_volume20: Math.round(vol.average),

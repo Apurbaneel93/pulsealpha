@@ -2,7 +2,7 @@
   "id": "/",
   "name": "PulseAlpha — NSE Bullish Setups",
   "short_name": "PulseAlpha",
-  "description": "2–3 high-conviction bullish NSE setups a day, timestamped in IST, with ATR-based buy zone, target and stop-loss.",
+  "description": "2–3 high-conviction bullish NSE setups a day, timestamped in IST, with an ATR-based buy zone, two targets and a stop-loss.",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",

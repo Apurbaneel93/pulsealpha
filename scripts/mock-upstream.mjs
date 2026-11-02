@@ -11,7 +11,17 @@
 import { appendFileSync } from "node:fs";
 
 const DAY = 86_400_000;
-const BULLISH = new Set(["INFY", "LT", "BEL"]);
+/**
+ * The three names built to clear the momentum screen: a gentle run-up, a quiet
+ * last session (a coil) on heavy volume. `last` is the final session's move;
+ * `salt` picks the random walk and was chosen so each name passes all six checks.
+ * INFY closes far enough above its previous close to trip the 0.75 ATR gap guard.
+ */
+export const BULLISH = {
+  INFY: { salt: 13, last: 0.022 },
+  LT: { salt: 46, last: 0.012 },
+  BEL: { salt: 44, last: 0.012 },
+};
 
 export const calls = { yahoo: 0, news: 0, gemini: 0 };
 export const geminiRequests = [];
@@ -26,10 +36,11 @@ function rng(seed) {
   };
 }
 
-function chartJson(symbol, nowMs) {
+export function chartJson(symbol, nowMs, overrides = {}) {
   const base = symbol.replace(".NS", "");
-  const bullish = BULLISH.has(base);
-  const rand = rng([...symbol].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7));
+  const spec = { ...BULLISH[base], ...overrides };
+  const bullish = BULLISH[base] !== undefined;
+  const rand = rng(([...symbol].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7) + (spec.salt ?? 0) * 7919) | 0);
   const n = 140;
   const ts = [], o = [], h = [], l = [], c = [], v = [];
   let price = 1000;
@@ -37,15 +48,19 @@ function chartJson(symbol, nowMs) {
   for (let i = 0; i < n; i++) {
     day += (i % 5 === 4 ? 3 : 1) * DAY;
     const run = bullish && i > n - 26;
-    const r = bullish && i === n - 1 ? 0.012 : (run ? 0.0012 : 0) + (rand() - 0.5) * 0.024;
+    const lastDay = bullish && i === n - 1;
+    // Daily moves are about 1.4% on average, so ATR sits near 2.4% of price (the screen wants at least 2.2%).
+    const r = lastDay ? spec.last : (run ? 0.003 : 0) + (rand() - 0.5) * 0.055;
     const open = price;
     price = price * (1 + r);
     ts.push(Math.floor(day / 1000));
     o.push(open);
     c.push(price);
-    h.push(Math.max(open, price) * (1 + rand() * 0.006));
-    l.push(Math.min(open, price) * (1 - rand() * 0.006));
-    v.push(Math.round(1e6 * (bullish && i === n - 1 ? 2.3 : 0.8 + rand() * 0.4)));
+    // The last bullish session has tight wicks: a small range for its size, so the coil ratio stays low.
+    const wick = lastDay ? 0.002 : 0.01;
+    h.push(Math.max(open, price) * (1 + rand() * wick));
+    l.push(Math.min(open, price) * (1 - rand() * wick));
+    v.push(Math.round(1e6 * (lastDay ? 2.3 : 0.8 + rand() * 0.4)));
   }
   // A regular session that ended before "now", so no bar is treated as in-progress.
   const period = (startMs, endMs) => ({ timezone: "IST", start: Math.floor(startMs / 1000), end: Math.floor(endMs / 1000), gmtoffset: 19800 });
@@ -175,13 +190,51 @@ function rss(symbol, nowMs) {
 function geminiResponse(body) {
   geminiRequests.push(body);
   const picks = [
-    { symbol: "LT", conviction: 84, catalyst: "Order-win headline + 2.3x volume", global_cue: "US indices firm; infra beta benefits.", technical_trigger: "Breakout above 20-EMA on 2.3x volume.", news_catalyst: "Fresh export-order headline in the last 3 hours." },
-    // Tries to sneak in a price — must be replaced by deterministic copy.
-    { symbol: "INFY", conviction: 79, catalyst: "Nasdaq IT tailwind + volume breakout", global_cue: "Nasdaq strength supports IT exporters.", technical_trigger: "Target ₹9,999 looks achievable.", news_catalyst: "Export-order headline in the last day." },
-    // Hallucinated ticker — must be dropped.
-    { symbol: "FAKE", conviction: 99, catalyst: "Hallucinated", global_cue: "x", technical_trigger: "x", news_catalyst: "x" },
+    {
+      rank: 1,
+      symbol: "LT",
+      convictionScore: 88,
+      catalystCategory: "Order Win",
+      catalystFreshness: "Unpriced Post-Market",
+      whyItWillExpandToday: "A fresh order headline landed after the close and the prior day was a tight coil on heavy volume. Fresh buyers have room to push before profit-taking.",
+      executionRisk: "Skip if opening gap exceeds 0.75 ATR",
+    },
+    // Tries to sneak a price into the prose: must be replaced by deterministic copy.
+    {
+      rank: 2,
+      symbol: "INFY",
+      convictionScore: 79,
+      catalystCategory: "Sector Tailwind",
+      catalystFreshness: "Ongoing Multi-Day",
+      whyItWillExpandToday: "Nasdaq strength supports IT exporters. Target ₹9,999 looks achievable.",
+      executionRisk: "Skip if the Nasdaq cue reverses",
+    },
+    // Hallucinated ticker: must be dropped.
+    {
+      rank: 3,
+      symbol: "FAKE",
+      convictionScore: 99,
+      catalystCategory: "Order Win",
+      catalystFreshness: "Unpriced Post-Market",
+      whyItWillExpandToday: "Hallucinated.",
+      executionRisk: "x",
+    },
+    // A recap of yesterday's move, which the model flagged itself: must not become a pick.
+    {
+      rank: 4,
+      symbol: "BEL",
+      convictionScore: 90,
+      catalystCategory: "Technical Coil Breakout",
+      catalystFreshness: "Priced-In Recap",
+      whyItWillExpandToday: "Why BEL surged yesterday. Buyers already got in.",
+      executionRisk: "Late entry",
+    },
   ];
-  return { candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify({ picks }) }] }, finishReason: "STOP" }] };
+  const out = {
+    marketRegimeSummary: "US tech closed firm and Nifty is steady, so coiled setups with hard catalysts should follow through intraday.",
+    picks,
+  };
+  return { candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(out) }] }, finishReason: "STOP" }] };
 }
 
 export function installMockUpstream({ now } = {}) {

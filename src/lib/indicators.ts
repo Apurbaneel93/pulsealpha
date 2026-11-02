@@ -27,6 +27,14 @@ export function ema(values: readonly number[], period: number): number | null {
   return s.length ? (s[s.length - 1] ?? null) : null;
 }
 
+/** Simple moving average of the last `period` values. */
+export function sma(values: readonly number[], period: number): number | null {
+  if (period <= 0 || values.length < period) return null;
+  let sum = 0;
+  for (let i = values.length - period; i < values.length; i++) sum += values[i] ?? 0;
+  return sum / period;
+}
+
 /** Wilder's RSI. Needs at least period + 1 closes. */
 export function rsi(closes: readonly number[], period = 14): number | null {
   if (closes.length < period + 1) return null;

@@ -10,6 +10,7 @@ import { useIsDesktop } from "./useIsDesktop";
 import { rupees, signedPct } from "@/lib/format";
 import { formatDayHeading, istDateKey, isNseSessionOpen } from "@/lib/time";
 import { planStatus, quoteLagSeconds } from "@/lib/live-pure";
+import { HARD_FILTER } from "@/lib/rules-engine";
 import type { LiveQuote, ScanResult } from "@/lib/types";
 
 interface Props {
@@ -166,7 +167,7 @@ export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink, quotes
           </h1>
           {scan ? (
             <p className="mt-1 text-[13px] leading-snug text-muted lg:text-[14px]">
-              {scan.shortlist_size} of {scan.universe_size} stocks cleared the filter. {engineLabel(scan)}.
+              {scan.shortlist_size} of {scan.universe_size} stocks cleared the momentum screen. {engineLabel(scan)}.
               {scan.cache ? ` Market data refreshes every ${Math.round(scan.cache.refresh_seconds / 60)} min.` : null}
             </p>
           ) : (
@@ -174,6 +175,13 @@ export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink, quotes
               {scanning ? "Reading global cues and scanning the watchlist…" : "Run a scan to see today's setups."}
             </p>
           )}
+
+          {scan?.regime_summary ? (
+            <p className="mt-2 text-[13px] leading-snug text-fg lg:text-[14px]">
+              <span className="font-semibold text-muted">Market read: </span>
+              {scan.regime_summary}
+            </p>
+          ) : null}
 
           {scan && !isDemo ? (
             <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-snug text-muted lg:text-[12.5px]">
@@ -245,10 +253,11 @@ export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink, quotes
           {scan && scan.picks.length === 0 && !scanning ? (
             <div className="rounded-2xl border border-dashed border-line px-5 py-8 text-center">
               <SearchX size={28} className="mx-auto text-faint" aria-hidden />
-              <p className="mt-3 text-[15px] font-semibold text-fg">No stock cleared today&apos;s filter</p>
-              <p className="mx-auto mt-1.5 max-w-[30ch] text-[13px] leading-snug text-muted lg:max-w-[48ch]">
-                The screen needs price above the 20-EMA, RSI between 55 and 72 and volume above 1.5x. Try again after the
-                next session closes.
+              <p className="mt-3 text-[15px] font-semibold text-fg">No stock cleared today&apos;s screen</p>
+              <p className="mx-auto mt-1.5 max-w-[34ch] text-[13px] leading-snug text-muted lg:max-w-[52ch]">
+                The screen wants a stock just above its 20-day average (not more than {HARD_FILTER.maxExtensionPct}% over it), RSI between{" "}
+                {HARD_FILTER.rsiMin} and {HARD_FILTER.rsiMax}, a quiet prior day, enough volatility and {HARD_FILTER.volumeRatioMin}x volume.
+                Some days nothing qualifies, and no pick is better than a forced one. Try again after the next session.
               </p>
               <button
                 type="button"

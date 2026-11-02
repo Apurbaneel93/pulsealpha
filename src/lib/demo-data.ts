@@ -36,12 +36,13 @@ function gaussian(rand: () => number): number {
 }
 
 /** Approximate price anchors for the simulated board (not live quotes). */
-const DEMO_BOARD: ReadonlyArray<{ symbol: string; anchor: number; bullish: boolean }> = [
+const DEMO_BOARD: ReadonlyArray<{ symbol: string; anchor: number; bullish: boolean; lastMove?: number }> = [
   { symbol: "INFY", anchor: 1540, bullish: true },
   { symbol: "BHARTIARTL", anchor: 1985, bullish: true },
   { symbol: "LT", anchor: 3820, bullish: true },
   { symbol: "SUNPHARMA", anchor: 1715, bullish: true },
-  { symbol: "BEL", anchor: 412, bullish: true },
+  // Closes the last session well above its previous close, so the card shows the "don't chase" gap guard.
+  { symbol: "BEL", anchor: 412, bullish: true, lastMove: 0.024 },
   { symbol: "RELIANCE", anchor: 1455, bullish: false },
   { symbol: "TCS", anchor: 3140, bullish: false },
   { symbol: "HDFCBANK", anchor: 990, bullish: false },
@@ -68,7 +69,7 @@ function sessionDates(now: Date, count: number): string[] {
   return dates.reverse();
 }
 
-function simulate(anchor: number, bullish: boolean, rand: () => number, dates: string[]): Candle[] {
+function simulate(anchor: number, bullish: boolean, rand: () => number, dates: string[], lastMove = 0.007): Candle[] {
   const n = dates.length;
   const baseVol = 2_000_000 + rand() * 6_000_000;
   // Walk backwards from the anchor so the last close lands near it.
@@ -76,19 +77,23 @@ function simulate(anchor: number, bullish: boolean, rand: () => number, dates: s
   closes[n - 1] = anchor * (0.985 + rand() * 0.03);
   for (let i = n - 1; i > 0; i--) {
     const inRun = bullish && i >= n - 26;
-    const drift = inRun ? 0.0032 : 0.0002;
-    const sigma = inRun ? 0.011 : 0.014;
+    const drift = inRun ? 0.0016 : 0.0002;
+    const sigma = inRun ? 0.0125 : 0.014;
     const lastDay = bullish && i === n - 1;
-    const r = lastDay ? 0.016 + rand() * 0.014 : drift + sigma * gaussian(rand);
+    // A coiled last day: a modest move on a normal-to-tight range, not a spike.
+    const r = lastDay ? lastMove * (0.7 + rand() * 0.6) : drift + sigma * gaussian(rand);
     closes[i - 1] = (closes[i] ?? anchor) / (1 + r);
   }
   return closes.map((close, i) => {
     const prev = i > 0 ? (closes[i - 1] ?? close) : close;
     const open = prev * (1 + 0.003 * gaussian(rand));
-    const span = Math.abs(close - open) + close * (0.004 + rand() * 0.01);
+    const lastBullDay = bullish && i === n - 1;
+    // Ordinary days carry ~2.5% ranges; the last bullish day is tighter than that (the coil).
+    const wick = lastBullDay ? 0.002 + rand() * 0.004 : 0.008 + rand() * 0.014;
+    const span = Math.abs(close - open) + close * wick;
     const high = Math.max(open, close) + span * rand() * 0.6;
     const low = Math.min(open, close) - span * rand() * 0.6;
-    const spike = bullish && i === n - 1 ? 1.75 + rand() * 1.1 : 0.7 + rand() * 0.6;
+    const spike = lastBullDay ? 1.6 + rand() * 1.0 : 0.7 + rand() * 0.6;
     return {
       date: dates[i] ?? "",
       open,
@@ -121,7 +126,7 @@ export function buildDemoInputs(now = new Date()): DemoInputs {
     let chosen: TechnicalSnapshot | null = null;
     for (let v = 0; v < attempts; v++) {
       const rand = mulberry32(hash(`${day}:${row.symbol}:${v}`));
-      const candles = simulate(row.anchor, row.bullish, rand, dates);
+      const candles = simulate(row.anchor, row.bullish, rand, dates, row.lastMove);
       const snap = snapshotFromSeries(entry, { completed: candles, last: candles[candles.length - 1]?.close ?? 0, inProgress: false });
       if (!snap) continue;
       chosen = snap;

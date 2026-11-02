@@ -8,7 +8,7 @@ import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 export const metadata: Metadata = {
   title: "PulseAlpha — NSE bullish setups",
   description:
-    "2–3 high-conviction bullish NSE setups a day, timestamped in IST, with ATR-based buy zone, target and stop-loss.",
+    "2–3 high-conviction bullish NSE setups a day, timestamped in IST, with an ATR-based buy zone, two targets and a stop-loss.",
   applicationName: "PulseAlpha",
   manifest: "/manifest.json",
   icons: {

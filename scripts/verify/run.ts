@@ -7,6 +7,7 @@
  *   GEMINI_API_KEY=... npm run verify    # Gemini ranking, as on Vercel
  */
 import { evaluateWithGemini } from "../../src/lib/gemini";
+import { EXIT_PLAN } from "../../src/lib/levels";
 import { loadLiveMarketData, runScan } from "../../src/lib/scanner";
 import { buildVerifyReport } from "../../src/lib/verify";
 import type { Stats } from "../../src/lib/backtest";
@@ -36,18 +37,24 @@ async function main() {
     process.exit(1);
   }
   console.log(`Market regime: ${scan.market.summary} (score ${scan.market.score})`);
+  if (scan.regime_summary) console.log(`Regime read: ${scan.regime_summary}`);
   console.log(`Engine: ${scan.engine}${scan.model ? ` (${scan.model})` : ""}. Detected at ${scan.scanned_at}\n`);
   if (scan.picks.length === 0) console.log("No picks today — nothing cleared the filter.\n");
   for (const p of scan.picks) {
     console.log(`#${p.rank} ${p.symbol} — ${p.name} (${p.sector})   conviction ${p.conviction}`);
     console.log(`   Price ${inr(p.current_price)} (${pct(p.day_change_pct)})`);
+    const lv = p.levels;
     console.log(
-      `   Buy zone ${inr(p.levels.entry_low)}–${inr(p.levels.entry_high)} | Target ${inr(p.levels.target_price)} (${pct(p.levels.target_pct)}) | Stop ${inr(p.levels.stop_loss)} (${pct(p.levels.stop_pct)})`,
+      `   ${lv.gap_status === "WAIT_FOR_PULLBACK" ? "WAIT FOR PULLBACK" : "ACTIVE BUY ZONE"} (gap ${lv.opening_gap_atr.toFixed(2)} ATR) | Buy zone ${inr(lv.entry_low)}–${inr(lv.entry_high)} | Stop ${inr(lv.stop_loss)} (${pct(lv.stop_pct)})`,
     );
     console.log(
-      `   RSI ${p.metrics.rsi14} | Volume ${p.metrics.volume_ratio}x | 20-EMA ${inr(p.metrics.ema20)} | 50-EMA ${inr(p.metrics.ema50)} | ATR ${inr(p.metrics.atr14)}`,
+      `   T1 ${inr(lv.target_1)} (${pct(lv.target_1_pct)}) ${EXIT_PLAN.target1} | T2 ${inr(lv.target_2)} (${pct(lv.target_2_pct)}) ${EXIT_PLAN.target2}`,
     );
-    console.log(`   Catalyst: ${p.catalyst}`);
+    console.log(
+      `   RSI ${p.metrics.rsi14} | RVOL ${p.metrics.volume_ratio}x | ATR ${p.metrics.atr_pct}% | Coil ${p.metrics.coil_ratio} | ${p.metrics.sma20_extension_pct}% above 20-DMA`,
+    );
+    console.log(`   ${p.catalyst_category} · ${p.catalyst_freshness}. ${p.breakdown.thesis}`);
+    console.log(`   Risk: ${p.execution_risk}`);
     for (const n of p.news.slice(0, 2)) console.log(`   News: ${n.title} — ${n.source}`);
     console.log("");
   }
@@ -58,30 +65,37 @@ async function main() {
   const v = await buildVerifyReport(now);
   const f = v.todayFunnel;
   console.log(
-    `\nFilter funnel today: ${f.scanned} scanned → ${f.aboveEma20} above 20-EMA, ${f.rsiInBand} RSI 55–72, ${f.volumeOk} volume >1.5x → ${f.passedAll} passed all three`,
+    `\nFilter funnel today: ${f.scanned} scanned → ${f.trend} above 20-DMA, ${f.extension} within 4.5% of it, ${f.rsi} RSI 52–65, ${f.coil} range ≤1.25x ATR, ${f.volatility} ATR ≥2.2%, ${f.volume} RVOL ≥1.5x → ${f.passedAll} passed all six`,
   );
   console.log("\nCross-check these against any chart (last 3 sessions + computed indicators):");
   for (const d of v.dataCheck) {
     const s = d.lastSessions.map((x) => `${x.date} C ${x.close} V ${x.volume.toLocaleString("en-IN")}`).join(" | ");
     const c = d.computed;
     console.log(`  ${d.symbol.padEnd(10)} ${s}`);
-    if (c) console.log(`  ${"".padEnd(10)} RSI ${c.rsi14}  20-EMA ${c.ema20}  50-EMA ${c.ema50}  ATR ${c.atr14}  Vol ${c.volume_ratio}x`);
+    if (c)
+      console.log(
+        `  ${"".padEnd(10)} RSI ${c.rsi14}  20-DMA ${c.sma20}  ATR ${c.atr14} (${c.atr_pct}%)  Coil ${c.coil_ratio}  Ext ${c.sma20_extension_pct}%  RVOL ${c.volume_ratio}x`,
+      );
   }
 
   const b = v.backtest;
-  console.log(`\nReplay ${b.period.from} → ${b.period.to}, ${b.symbols} stocks. Break-even target-hit rate ignoring timeouts: ${b.breakEvenHitRatePct}%`);
-  console.log("Group".padEnd(30) + "Trades  Target   Stop  Timeout  Win%   Avg ret    PF");
-  const row = (name: string, s: Stats) =>
+  console.log(`\nReplay ${b.period.from} → ${b.period.to}, ${b.symbols} stocks. Break-even Target-1 hit rate if no runner reaches Target 2: ${b.breakEvenT1RatePct}%`);
+  console.log("Group".padEnd(30) + "Trades    T1%    T2%   Stop%    BE%  Timeout  Win%   Avg ret    PF");
+  const row = (name: string, s: Stats) => {
+    const share = (n: number) => `${((n / Math.max(1, s.trades)) * 100).toFixed(1)}%`;
     console.log(
       name.padEnd(30) +
         String(s.trades).padStart(6) +
-        `${s.hitRatePct.toFixed(1)}%`.padStart(8) +
-        `${((s.stopHits / Math.max(1, s.trades)) * 100).toFixed(1)}%`.padStart(7) +
-        `${((s.timeouts / Math.max(1, s.trades)) * 100).toFixed(1)}%`.padStart(9) +
+        `${s.t1RatePct.toFixed(1)}%`.padStart(7) +
+        `${s.t2RatePct.toFixed(1)}%`.padStart(7) +
+        share(s.stopHits).padStart(8) +
+        share(s.breakevenExits).padStart(7) +
+        share(s.timeouts).padStart(9) +
         `${s.winRatePct.toFixed(1)}%`.padStart(7) +
         pct(s.avgReturnPct).padStart(9) +
         s.profitFactor.toFixed(2).padStart(6),
     );
+  };
   for (const h of b.horizons) {
     row(`Top picks, ${h.sessions}-day hold`, h.topPicks);
     row(`All signals, ${h.sessions}-day hold`, h.allSignals);

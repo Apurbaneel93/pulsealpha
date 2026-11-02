@@ -1,14 +1,15 @@
 "use client";
 
 import { useId, useState } from "react";
-import { Activity, ChevronDown, Clock, ExternalLink, Globe, Newspaper, Zap } from "lucide-react";
+import { Activity, ChevronDown, Clock, ExternalLink, Globe, Lightbulb, ShieldAlert, ShieldCheck, TriangleAlert, Zap } from "lucide-react";
 import { LiveBadge, Ticking } from "./LivePrice";
 import { StockChart } from "./StockChart";
+import { EXIT_PLAN, LEVEL_MULTIPLIERS } from "@/lib/levels";
 import { planStatus } from "@/lib/live-pure";
 import { plain, rupees, signedPct } from "@/lib/format";
 import { useIsWide } from "./useIsDesktop";
 import { formatBadge, formatClock } from "@/lib/time";
-import type { Engine, LiveQuote, Pick } from "@/lib/types";
+import type { CatalystFreshness, Engine, LiveQuote, Pick } from "@/lib/types";
 
 interface Props {
   pick: Pick;
@@ -25,33 +26,43 @@ const STATUS_STYLE = {
   neutral: "border-line bg-ink/40 text-muted",
 } as const;
 
-function Level({
+const FRESHNESS_STYLE: Record<CatalystFreshness, string> = {
+  "Unpriced Post-Market": "border-bull/35 bg-bull/10 text-bull",
+  "Ongoing Multi-Day": "border-line bg-ink/40 text-muted",
+  "Priced-In Recap": "border-caution/35 bg-caution/10 text-caution",
+};
+
+function PlanCell({
   label,
-  shortLabel,
   value,
   sub,
+  note,
   tone,
 }: {
   label: string;
-  shortLabel?: string;
   value: string;
   sub: string;
+  /** How this level is managed, e.g. "Book 60% & Trail SL to Breakeven". */
+  note?: string;
   tone: "neutral" | "bull" | "bear";
 }) {
   const color = tone === "bull" ? "text-bull" : tone === "bear" ? "text-bear" : "text-fg";
   return (
-    <div className="min-w-0 px-2.5 py-2.5 max-[359px]:px-2">
-      <p className="truncate text-[11px] text-muted">
-        <span className={shortLabel ? "max-[359px]:hidden" : ""}>{label}</span>
-        {shortLabel ? <span className="hidden max-[359px]:inline">{shortLabel}</span> : null}
-      </p>
-      <p className={`num mt-1 truncate text-[14px] font-semibold leading-tight max-[359px]:text-[12.5px] ${color}`}>
-        {value}
-      </p>
-      <p className={`num mt-0.5 truncate text-[11.5px] ${tone === "neutral" ? "text-muted" : color} ${tone === "neutral" ? "" : "opacity-85"}`}>
-        {sub}
-      </p>
+    <div className="min-w-0 px-3 py-2.5 max-[359px]:px-2.5">
+      <p className="text-[11px] text-muted">{label}</p>
+      <p className={`num mt-1 truncate text-[15px] font-semibold leading-tight max-[359px]:text-[13.5px] ${color}`}>{value}</p>
+      <p className={`num mt-0.5 truncate text-[11.5px] ${tone === "neutral" ? "text-muted" : `${color} opacity-85`}`}>{sub}</p>
+      {note ? <p className="mt-1 text-[11px] leading-snug text-muted">{note}</p> : null}
     </div>
+  );
+}
+
+function Pill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="num inline-flex items-baseline gap-1 rounded-md border border-line bg-ink/40 px-2 py-1 text-[12px] leading-none">
+      <span className="text-[10.5px] text-muted">{label}</span>
+      <span className="font-semibold text-fg">{value}</span>
+    </span>
   );
 }
 
@@ -68,10 +79,14 @@ export function PickCard({ pick, engine, index, live }: Props) {
   const up = change >= 0;
   const status = live ? planStatus(live.price, levels) : null;
 
+  const waiting = levels.gap_status === "WAIT_FOR_PULLBACK";
+  const gapText = `${levels.opening_gap_atr >= 0 ? "+" : "−"}${Math.abs(levels.opening_gap_atr).toFixed(2)} ATR`;
+
   const bullets = [
-    { icon: Globe, title: "Global & sector cues", body: pick.breakdown.global_cue },
+    { icon: Globe, title: "Market regime", body: pick.breakdown.global_cue },
     { icon: Activity, title: "Technical trigger", body: pick.breakdown.technical_trigger },
-    { icon: Newspaper, title: "News catalyst", body: pick.breakdown.news_catalyst },
+    { icon: Lightbulb, title: "Why it can expand today", body: pick.breakdown.thesis },
+    { icon: TriangleAlert, title: "Execution risk", body: pick.execution_risk },
   ];
 
   return (
@@ -123,24 +138,74 @@ export function PickCard({ pick, engine, index, live }: Props) {
           </p>
         ) : null}
 
-        <StockChart symbol={pick.symbol} levels={levels} live={live} height={wide ? 250 : 172} />
+
+        {/* Gap Guard: is this a buy now, or a wait for a pullback? */}
+        <div
+          className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 ${
+            waiting ? "border-caution/35 bg-caution/10" : "border-bull/30 bg-bull/[0.07]"
+          }`}
+        >
+          {waiting ? (
+            <ShieldAlert size={16} className="mt-0.5 shrink-0 text-caution" aria-hidden />
+          ) : (
+            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-bull" aria-hidden />
+          )}
+          <div className="min-w-0">
+            <p className={`text-[12.5px] font-semibold ${waiting ? "text-caution" : "text-bull"}`}>
+              {waiting ? "Wait for pullback" : "Active buy zone"}
+              <span className="num ml-1.5 inline-block whitespace-nowrap font-medium text-muted">Gap Guard · {gapText}</span>
+            </p>
+            <p className="mt-0.5 text-[12px] leading-snug text-muted">
+              {waiting
+                ? `Already up more than ${LEVEL_MULTIPLIERS.gapGuard} ATR since the previous close. Don't chase: the buy zone sits at the previous close + ${LEVEL_MULTIPLIERS.pullbackAnchor} ATR, so wait for a dip into it.`
+                : `Within ${LEVEL_MULTIPLIERS.gapGuard} ATR of the previous close, so the buy zone is built around the current price.`}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Setup metrics">
+          <Pill label="ATR%" value={`${metrics.atr_pct.toFixed(1)}%`} />
+          <Pill label="RVOL" value={`${metrics.volume_ratio.toFixed(1)}x`} />
+          <Pill label="Coil Ratio" value={metrics.coil_ratio.toFixed(2)} />
+        </div>
+
+        <StockChart symbol={pick.symbol} levels={levels} live={live} height={wide ? 300 : 172} />
       </div>
 
       {/* Phone: this block simply continues the card. Desktop: it is the right-hand column. */}
       <div className="xl:flex xl:min-w-0 xl:flex-col xl:border-l xl:border-line/80">
       {/* Trade plan: one segmented box so it reads as a single plan */}
-      <div className="mx-4 mt-3.5 grid grid-cols-3 divide-x divide-line rounded-xl border border-line bg-ink/55 xl:mx-5 xl:mt-5">
-        <Level label="Buy zone" value={rupees(levels.entry_low)} sub={`to ${plain(levels.entry_high)}`} tone="neutral" />
-        <Level label="Target" value={rupees(levels.target_price)} sub={signedPct(levels.target_pct)} tone="bull" />
-        <Level label="Safe stop-loss" shortLabel="Stop-loss" value={rupees(levels.stop_loss)} sub={signedPct(levels.stop_pct)} tone="bear" />
+      <div className="mx-4 mt-3.5 grid grid-cols-2 divide-x divide-y divide-line overflow-hidden rounded-xl border border-line bg-ink/55 xl:mx-5 xl:mt-5 [&>*:nth-child(-n+2)]:border-t-0">
+        <PlanCell
+          label={waiting ? "Buy zone (on pullback)" : "Buy zone"}
+          value={rupees(levels.entry_low)}
+          sub={`to ${plain(levels.entry_high)}`}
+          tone="neutral"
+        />
+        <PlanCell label="Safe stop-loss" value={rupees(levels.stop_loss)} sub={`${signedPct(levels.stop_pct)} · −${LEVEL_MULTIPLIERS.stop.toFixed(2)} ATR`} tone="bear" />
+        <PlanCell
+          label="Target 1"
+          value={rupees(levels.target_1)}
+          sub={`${signedPct(levels.target_1_pct)} · +${LEVEL_MULTIPLIERS.target1.toFixed(2)} ATR`}
+          note={EXIT_PLAN.target1}
+          tone="bull"
+        />
+        <PlanCell
+          label="Target 2"
+          value={rupees(levels.target_2)}
+          sub={`${signedPct(levels.target_2_pct)} · +${LEVEL_MULTIPLIERS.target2.toFixed(2)} ATR`}
+          note={EXIT_PLAN.target2}
+          tone="bull"
+        />
       </div>
 
       {/* Catalyst */}
-      <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-bull/25 bg-bull/10 px-3 py-2 xl:mx-5 xl:items-start">
-        <Zap size={14} className="shrink-0 text-bull xl:mt-0.5" fill="currentColor" aria-hidden />
-        <p className="truncate text-[13px] font-medium text-fg xl:overflow-visible xl:whitespace-normal" title={pick.catalyst}>
-          {pick.catalyst}
-        </p>
+      <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-bull/25 bg-bull/10 px-3 py-2 xl:mx-5">
+        <Zap size={14} className="shrink-0 text-bull" fill="currentColor" aria-hidden />
+        <p className="min-w-0 text-[13px] font-medium text-fg">{pick.catalyst_category}</p>
+        <span className={`rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${FRESHNESS_STYLE[pick.catalyst_freshness]}`}>
+          {pick.catalyst_freshness}
+        </span>
       </div>
 
       {/* Collapsible research (always open on desktop) */}
@@ -188,11 +253,11 @@ export function PickCard({ pick, engine, index, live }: Props) {
             ))}
           </ul>
 
-          <dl className="mx-4 mt-3.5 grid grid-cols-4 xl:mx-5 gap-px overflow-hidden rounded-lg bg-line text-center">
+          <dl className="mx-4 mt-3.5 grid grid-cols-4 gap-px overflow-hidden rounded-lg bg-line text-center xl:mx-5">
             {[
               ["RSI 14", metrics.rsi14.toFixed(1)],
-              ["Volume", `${metrics.volume_ratio.toFixed(2)}x`],
-              ["20-EMA", plain(metrics.ema20)],
+              ["vs 20-DMA", `${metrics.sma20_extension_pct >= 0 ? "+" : ""}${metrics.sma20_extension_pct.toFixed(1)}%`],
+              ["20-DMA", plain(metrics.sma20)],
               ["ATR 14", plain(metrics.atr14)],
             ].map(([k, v]) => (
               <div key={k} className="min-w-0 bg-panel-2 px-1 py-2">
@@ -227,8 +292,9 @@ export function PickCard({ pick, engine, index, live }: Props) {
           ) : null}
 
           <p className="mx-4 mb-4 mt-3 text-[11.5px] leading-snug text-faint xl:mx-5 xl:mb-0">
-            Levels are computed in code from the price and 14-day ATR: buy zone up to +0.15 ATR, target +2.5 ATR,
-            stop −1.5 ATR.
+            Levels are computed in code from the price, previous close and 14-day ATR: buy zone ±{LEVEL_MULTIPLIERS.entryBand.toFixed(2)} ATR, stop
+            −{LEVEL_MULTIPLIERS.stop.toFixed(2)} ATR, Target 1 +{LEVEL_MULTIPLIERS.target1.toFixed(2)} ATR, Target 2 +
+            {LEVEL_MULTIPLIERS.target2.toFixed(2)} ATR.
           </p>
         </div>
       </div>

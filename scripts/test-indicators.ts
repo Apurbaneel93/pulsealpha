@@ -1,11 +1,11 @@
 /* Sanity tests for the deterministic engine. Run: npm test */
 import assert from "node:assert/strict";
-import { atr, ema, rsi, volumeRatio } from "../src/lib/indicators";
-import { computeLevels } from "../src/lib/levels";
+import { atr, ema, rsi, sma, volumeRatio } from "../src/lib/indicators";
 import { formatBadge, formatDetectedAt, formatLastScan } from "../src/lib/time";
 import { buildDemoInputs } from "../src/lib/demo-data";
 import { passesHardFilter, rankByRules } from "../src/lib/rules-engine";
-import { classifyRegime } from "../src/lib/market-data-pure";
+import { classifyRegime, snapshotFromSeries } from "../src/lib/market-data-pure";
+import { computeLevels } from "../src/lib/levels";
 import type { Candle } from "../src/lib/types";
 
 let passed = 0;
@@ -53,18 +53,40 @@ test("Volume ratio excludes the latest bar from its own baseline", () => {
   assert.ok(v && v.ratio === 2.5 && v.average === 1000);
 });
 
-test("ATR levels follow the spec multipliers and NSE tick size", () => {
-  const l = computeLevels(1000, 20);
-  assert.deepEqual(
-    { e0: l.entry_low, e1: l.entry_high, t: l.target_price, s: l.stop_loss },
-    { e0: 1000, e1: 1003, t: 1050, s: 970 },
-  );
-  assert.equal(l.target_pct, 5);
-  assert.equal(l.stop_pct, -3);
-  const odd = computeLevels(412.37, 9.13);
-  for (const v of [odd.entry_low, odd.entry_high, odd.target_price, odd.stop_loss]) {
-    assert.ok(Math.abs(Math.round(v * 20) - v * 20) < 1e-6, `${v} not on 0.05 tick`);
-  }
+test("SMA is the plain mean of the last N closes, and null without enough data", () => {
+  assert.equal(sma([1, 2, 3, 4, 5], 5), 3);
+  assert.equal(sma([100, 1, 2, 3, 4, 5], 5), 3, "only the last N closes count");
+  assert.equal(sma([1, 2, 3], 5), null);
+});
+
+test("Snapshot ratios match a hand calculation (coil, ATR%, 20-DMA extension, gap)", () => {
+  // 60 sessions of an identical 4-point range around 100, then a quiet last session.
+  const flat: Candle[] = Array.from({ length: 60 }, (_, i) => ({
+    date: new Date(Date.UTC(2026, 0, i + 1)).toISOString(),
+    open: 100,
+    high: 102,
+    low: 98,
+    close: 100,
+    volume: 1000,
+  }));
+  const last: Candle = { ...flat[0]!, date: new Date(Date.UTC(2026, 4, 1)).toISOString(), open: 100, high: 104, low: 101, close: 103, volume: 3000 };
+  const entry = { symbol: "TEST", yahoo: "TEST.NS", name: "Test Ltd", sector: "IT" as const };
+  const snap = snapshotFromSeries(entry, { completed: [...flat, last], last: 103, inProgress: false });
+  assert.ok(snap);
+  // ATR(14) over 13 flat sessions and the last one: the last true range is 104 − 100 = 4, same as the flat ones.
+  assert.equal(snap.atr14, 4);
+  assert.equal(snap.atr_pct, 3.88, "4 ÷ 103");
+  assert.equal(snap.coil_ratio, 0.75, "last session range 3 ÷ ATR 4");
+  assert.equal(snap.sma20, 100.15, "(19 × 100 + 103) ÷ 20");
+  assert.equal(snap.sma20_extension_pct, 2.85, "(103 − 100.15) ÷ 100.15");
+  assert.equal(snap.prev_close, 100);
+  assert.equal(snap.opening_gap_atr, 0.75, "(103 − 100) ÷ 4");
+  assert.equal(snap.volume_ratio, 3);
+
+  // While a session is open, the live price is measured against the last completed close.
+  const live = snapshotFromSeries(entry, { completed: [...flat, last], last: 106, inProgress: true });
+  assert.equal(live?.prev_close, 103);
+  assert.equal(live?.opening_gap_atr, 0.75, "(106 − 103) ÷ 4");
 });
 
 test("IST formatting matches the spec examples", () => {
@@ -87,15 +109,18 @@ test("Regime classifier is deterministic at the edges", () => {
   assert.equal(mk(0.1, -0.1, 0.05, true), "Neutral");
 });
 
-test("Demo board runs through the real filter and yields 2–3+ candidates every day", () => {
+test("Demo board runs through the real filter and yields 2–3+ candidates every day, with both gap states", () => {
+  const states = new Set<string>();
   for (let day = 0; day < 60; day++) {
     const now = new Date(Date.UTC(2026, 10, 1 + day, 3, 0, 0));
     const { market, snapshots } = buildDemoInputs(now);
     const passing = snapshots.filter(passesHardFilter);
     assert.ok(passing.length >= 2, `day ${day}: only ${passing.length} passed`);
+    for (const s of passing) states.add(computeLevels(s.current_price, s.prev_close, s.atr14).gap_status);
     const ranked = rankByRules(passing, market, new Map());
     assert.ok(ranked.every((r) => r.conviction >= 1 && r.conviction <= 99));
   }
+  assert.deepEqual([...states].sort(), ["ACTIVE_BUY_ZONE", "WAIT_FOR_PULLBACK"], "the demo shows the gap guard working both ways");
   const a = buildDemoInputs(new Date("2026-11-01T03:00:00Z"));
   const b = buildDemoInputs(new Date("2026-11-01T08:00:00Z"));
   assert.deepEqual(a.snapshots, b.snapshots, "same IST day must produce the same board");

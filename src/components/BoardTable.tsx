@@ -1,25 +1,16 @@
 "use client";
 
 import { Fragment, useId, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, Search, X } from "lucide-react";
-import { computeLevels } from "@/lib/levels";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Search } from "lucide-react";
+import { CHECK_LABELS, CHECK_SHORT, CheckList, MiniPlan, joinNames, levelsForRow, missingChecks } from "./BoardParts";
 import { Ticking } from "./LivePrice";
 import { StockChart } from "./StockChart";
-import { plain, rupees, signedPct } from "@/lib/format";
-import type { BoardRow, LiveQuote } from "@/lib/types";
-
-export const CHECK_LABELS = {
-  trend: "Above 20-day average",
-  rsi: "RSI between 55 and 72",
-  volume: "Volume above 1.5x average",
-} as const;
-
-const SHORT = { trend: "Trend", rsi: "RSI", volume: "Volume" } as const;
-const CHECK_ORDER = ["trend", "rsi", "volume"] as const;
+import { rupees, signedPct } from "@/lib/format";
+import { CHECK_KEYS, type BoardRow, type LiveQuote } from "@/lib/types";
 
 const INITIAL_ROWS = 15;
 
-type SortKey = "rank" | "symbol" | "price" | "change" | "score" | "checks" | "rsi" | "volume" | "trend";
+type SortKey = "rank" | "symbol" | "price" | "change" | "score" | "checks" | "rsi" | "volume" | "atr" | "coil" | "trend";
 type Dir = "asc" | "desc";
 
 interface Entry {
@@ -36,7 +27,9 @@ const VALUE: Record<SortKey, (e: Entry, live?: LiveQuote) => number | string> = 
   checks: (e) => e.row.passed,
   rsi: (e) => e.row.rsi14,
   volume: (e) => e.row.volume_ratio,
-  trend: (e) => e.row.pct_above_ema20,
+  atr: (e) => e.row.atr_pct,
+  coil: (e) => e.row.coil_ratio,
+  trend: (e) => e.row.sma20_extension_pct,
 };
 
 /** What a first click on a column should do: text and rank ascend, everything else shows the biggest first. */
@@ -49,54 +42,26 @@ const FIRST_DIR: Record<SortKey, Dir> = {
   checks: "desc",
   rsi: "desc",
   volume: "desc",
+  atr: "desc",
+  // A tighter prior day is the better setup, so lowest first.
+  coil: "asc",
   trend: "desc",
 };
 
 function Detail({ row, live, id }: { row: BoardRow; live?: LiveQuote; id: string }) {
-  const missing = (["rsi", "volume"] as const).filter((k) => !row.checks[k]);
-  const values = {
-    trend: `${signedPct(row.pct_above_ema20, 1)} vs 20-day average`,
-    rsi: `RSI ${row.rsi14.toFixed(1)}`,
-    volume: `${row.volume_ratio.toFixed(2)}x average volume`,
-  };
-  const lv = computeLevels(row.price, row.atr14);
-  const full = row.passed === 3;
+  const missing = missingChecks(row);
+  const full = missing.length === 0;
+  const lv = levelsForRow(row);
   return (
-    <div id={id} className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] gap-8 border-t border-line/50 bg-ink/40 px-6 py-5">
+    <div id={id} className="grid grid-cols-[minmax(0,340px)_minmax(0,1fr)] gap-8 border-t border-line/50 bg-ink/40 px-6 py-5">
       <div className="min-w-0">
-        <ul className="space-y-2">
-          {CHECK_ORDER.map((k) => (
-            <li key={k} className="flex items-start gap-2 text-[13px] leading-snug">
-              {row.checks[k] ? (
-                <Check size={15} className="mt-px shrink-0 text-bull" aria-label="Pass" />
-              ) : (
-                <X size={15} className="mt-px shrink-0 text-bear" aria-label="Not yet" />
-              )}
-              <span className="min-w-0">
-                <span className="text-fg">{CHECK_LABELS[k]}</span>
-                <span className="text-muted">: {values[k]}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
+        <CheckList row={row} size={15} />
         {full ? (
-          <div className="mt-4 grid grid-cols-3 divide-x divide-line rounded-lg border border-line bg-ink/55 text-center">
-            {[
-              ["Buy zone", plain(lv.entry_low), `to ${plain(lv.entry_high)}`, "text-fg"],
-              ["Target", plain(lv.target_price), signedPct(lv.target_pct), "text-bull"],
-              ["Stop-loss", plain(lv.stop_loss), signedPct(lv.stop_pct), "text-bear"],
-            ].map(([label, value, sub, color]) => (
-              <div key={label} className="min-w-0 px-2 py-2.5">
-                <p className="text-[11px] text-muted">{label}</p>
-                <p className={`num mt-0.5 truncate text-[13px] font-semibold ${color}`}>{value}</p>
-                <p className="num truncate text-[11.5px] text-muted">{sub}</p>
-              </div>
-            ))}
+          <div className="mt-4">
+            <MiniPlan lv={lv} />
           </div>
         ) : (
-          <p className="mt-3 text-[12.5px] leading-snug text-muted">
-            Not a full setup yet. Still needs {missing.map((k) => CHECK_LABELS[k].toLowerCase()).join(" and ")}.
-          </p>
+          <p className="mt-3 text-[12.5px] leading-snug text-muted">Not a full setup yet. Still needs {joinNames(missing)}.</p>
         )}
         <p className="mt-3 text-[12px] text-faint">
           {row.sector}. 20-day average {row.ema20_above_ema50 ? "above" : "below"} the 50-day.
@@ -109,27 +74,28 @@ function Detail({ row, live, id }: { row: BoardRow; live?: LiveQuote; id: string
   );
 }
 
+/** Six dots, one per check, and the count. The full names are in the row's details. */
 function Checks({ row }: { row: BoardRow }) {
   return (
     <span
-      className="inline-flex items-center gap-1"
+      className="inline-flex items-center gap-2"
       role="img"
-      aria-label={`Passes ${row.passed} of 3 checks: ${CHECK_ORDER.filter((k) => row.checks[k])
+      aria-label={`Passes ${row.passed} of ${CHECK_KEYS.length} checks: ${CHECK_KEYS.filter((k) => row.checks[k])
         .map((k) => CHECK_LABELS[k].toLowerCase())
         .join(", ")}`}
     >
-      {CHECK_ORDER.map((k) => (
-        <span
-          key={k}
-          aria-hidden
-          className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${
-            row.checks[k] ? "border-bull/30 bg-bull/10 text-bull" : "border-line text-faint"
-          }`}
-        >
-          {row.checks[k] ? <Check size={11} strokeWidth={3} /> : <X size={11} strokeWidth={2.5} />}
-          {SHORT[k]}
-        </span>
-      ))}
+      <span className="inline-flex items-center gap-[3px]" aria-hidden>
+        {CHECK_KEYS.map((k) => (
+          <span
+            key={k}
+            title={`${CHECK_SHORT[k]}: ${row.checks[k] ? "pass" : "not yet"}`}
+            className={`size-2 rounded-full ${row.checks[k] ? "bg-bull" : "border border-faint"}`}
+          />
+        ))}
+      </span>
+      <span className={`num text-[12px] font-medium ${row.passed === CHECK_KEYS.length ? "text-bull" : "text-muted"}`} aria-hidden>
+        {row.passed}/{CHECK_KEYS.length}
+      </span>
     </span>
   );
 }
@@ -154,7 +120,7 @@ export function BoardTable({ board, pickSymbols, quotes }: Props) {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = entries.filter((e) => {
-      if (fullOnly && e.row.passed !== 3) return false;
+      if (fullOnly && e.row.passed !== CHECK_KEYS.length) return false;
       if (!q) return true;
       return [e.row.symbol, e.row.name, e.row.sector].some((t) => t.toLowerCase().includes(q));
     });
@@ -250,15 +216,14 @@ export function BoardTable({ board, pickSymbols, quotes }: Props) {
             <tr className="border-b border-line/70 text-[12px] text-muted">
               {th("rank", "#", "left", "w-14")}
               {th("symbol", "Stock", "left")}
-              <th scope="col" className="px-3 py-2.5 text-left font-medium">
-                Sector
-              </th>
               {th("price", "Price")}
               {th("change", "Change")}
               {th("checks", "Setup checks", "left")}
               {th("rsi", "RSI")}
-              {th("volume", "Volume")}
-              {th("trend", "vs 20-day")}
+              {th("volume", "RVOL")}
+              {th("atr", "ATR%")}
+              {th("coil", "Coil")}
+              {th("trend", "vs 20-DMA")}
               {th("score", "Score")}
               <th scope="col" className="w-10 px-3 py-2.5">
                 <span className="sr-only">Details</span>
@@ -268,7 +233,7 @@ export function BoardTable({ board, pickSymbols, quotes }: Props) {
           <tbody className="divide-y divide-line/60">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-10 text-center text-[13px] text-muted">
+                <td colSpan={12} className="px-4 py-10 text-center text-[13px] text-muted">
                   No stock matches that filter.
                 </td>
               </tr>
@@ -299,10 +264,11 @@ export function BoardTable({ board, pickSymbols, quotes }: Props) {
                             <span className="shrink-0 rounded bg-bull/15 px-1.5 py-px text-[10.5px] font-semibold text-bull">Top pick</span>
                           ) : null}
                         </span>
-                        <span className="mt-1 block max-w-[220px] truncate text-[12px] text-muted">{row.name}</span>
+                        <span className="mt-1 block max-w-[240px] truncate text-[12px] text-muted">
+                          {row.name} <span className="text-faint">/ {row.sector}</span>
+                        </span>
                       </button>
                     </td>
-                    <td className="px-3 py-3 text-[12.5px] text-muted">{row.sector}</td>
                     <td className="num px-3 py-3 text-right text-[13.5px] font-semibold text-fg">
                       <Ticking value={price}>{rupees(price)}</Ticking>
                     </td>
@@ -312,7 +278,9 @@ export function BoardTable({ board, pickSymbols, quotes }: Props) {
                     </td>
                     <td className="num px-3 py-3 text-right text-[13px] text-fg">{row.rsi14.toFixed(1)}</td>
                     <td className="num px-3 py-3 text-right text-[13px] text-fg">{row.volume_ratio.toFixed(2)}x</td>
-                    <td className="num px-3 py-3 text-right text-[13px] text-fg">{signedPct(row.pct_above_ema20, 1)}</td>
+                    <td className="num px-3 py-3 text-right text-[13px] text-fg">{row.atr_pct.toFixed(1)}%</td>
+                    <td className="num px-3 py-3 text-right text-[13px] text-fg">{row.coil_ratio.toFixed(2)}</td>
+                    <td className="num px-3 py-3 text-right text-[13px] text-fg">{signedPct(row.sma20_extension_pct, 1)}</td>
                     <td className="num px-3 py-3 text-right text-[13px] font-semibold text-fg">{row.score}</td>
                     <td className="px-3 py-3 text-right">
                       <ChevronDown
@@ -324,7 +292,7 @@ export function BoardTable({ board, pickSymbols, quotes }: Props) {
                   </tr>
                   {isOpen ? (
                     <tr>
-                      <td colSpan={11} className="p-0">
+                      <td colSpan={12} className="p-0">
                         <Detail row={row} live={live} id={detailId} />
                       </td>
                     </tr>

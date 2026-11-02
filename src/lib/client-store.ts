@@ -6,7 +6,7 @@ import type { DataMode, HistoryEntry, ScanResult } from "./types";
 
 const KEYS = {
   settings: "pulsealpha:settings:v1",
-  lastScan: "pulsealpha:last-scan:v2",
+  lastScan: "pulsealpha:last-scan:v3",
   history: "pulsealpha:history:v2",
 } as const;
 

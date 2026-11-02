@@ -158,7 +158,7 @@ export const quoteLagSeconds = (q: LiveQuote, now: Date): number =>
 
 // ── Price against the trade plan ────────────────────────────────────────────
 
-export type PlanKind = "target" | "stop" | "in_zone" | "above" | "below";
+export type PlanKind = "target_2" | "target_1" | "stop" | "in_zone" | "above" | "below";
 
 export interface PlanStatus {
   kind: PlanKind;
@@ -166,13 +166,19 @@ export interface PlanStatus {
   tone: "bull" | "bear" | "neutral" | "caution";
 }
 
-/** Where the live price sits relative to the pick's buy zone, target and stop-loss. */
-export function planStatus(price: number, levels: Pick<PriceLevels, "entry_low" | "entry_high" | "target_price" | "stop_loss">): PlanStatus {
-  if (price >= levels.target_price) return { kind: "target", label: "Target reached", tone: "bull" };
+type PlanLevels = Pick<PriceLevels, "entry_low" | "entry_high" | "target_1" | "target_2" | "stop_loss" | "gap_status">;
+
+/** Where the live price sits relative to the pick's buy zone, both targets and the stop-loss. */
+export function planStatus(price: number, levels: PlanLevels): PlanStatus {
+  if (price >= levels.target_2) return { kind: "target_2", label: "Target 2 reached", tone: "bull" };
+  if (price >= levels.target_1) return { kind: "target_1", label: "Target 1 reached", tone: "bull" };
   if (price <= levels.stop_loss) return { kind: "stop", label: "Below stop-loss", tone: "bear" };
   // Within 0.05% of an edge still counts as inside: "0.0% above" would read as a contradiction.
   const above = (price / levels.entry_high - 1) * 100;
-  if (above >= 0.05) return { kind: "above", label: `${above.toFixed(1)}% above buy zone`, tone: "caution" };
+  if (above >= 0.05) {
+    const waiting = levels.gap_status === "WAIT_FOR_PULLBACK";
+    return { kind: "above", label: `${waiting ? "Don't chase: " : ""}${above.toFixed(1)}% above buy zone`, tone: "caution" };
+  }
   const below = (1 - price / levels.entry_low) * 100;
   if (below >= 0.05) return { kind: "below", label: `${below.toFixed(1)}% below buy zone`, tone: "neutral" };
   return { kind: "in_zone", label: "In buy zone", tone: "bull" };

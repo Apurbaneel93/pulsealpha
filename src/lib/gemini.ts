@@ -1,43 +1,43 @@
 import "server-only";
 import { ApiError, GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { errorMessage } from "./async";
-import { pctAboveEma20, truncate } from "./rules-engine";
+import { SYSTEM_INSTRUCTION } from "./gemini-prompt";
+import { sessionCloseMs, truncate } from "./rules-engine";
 import { formatDetectedAt } from "./time";
-import type { MarketSnapshot } from "./types";
+import type { CatalystCategory, CatalystFreshness, MarketSnapshot } from "./types";
 
 /** gemini-2.5-flash was retired on 16 Oct 2026; 3.5 Flash is the GA successor. */
 export const DEFAULT_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash";
 const FALLBACK_MODEL = "gemini-flash-latest";
 
+export const CATALYST_CATEGORIES: readonly CatalystCategory[] = [
+  "Order Win",
+  "Earnings Beat",
+  "Regulatory",
+  "Sector Tailwind",
+  "Technical Coil Breakout",
+];
+export const CATALYST_FRESHNESS: readonly CatalystFreshness[] = ["Unpriced Post-Market", "Ongoing Multi-Day", "Priced-In Recap"];
+
+/** One validated pick from the model. Category and freshness are null when the model returned something outside the allowed set. */
 export interface AiPick {
   symbol: string;
   conviction: number;
-  catalyst: string;
-  global_cue: string;
-  technical_trigger: string;
-  news_catalyst: string;
+  catalyst_category: CatalystCategory | null;
+  catalyst_freshness: CatalystFreshness | null;
+  /** "whyItWillExpandToday": the 2-sentence thesis. */
+  thesis: string;
+  /** "executionRisk": what would invalidate the setup. */
+  execution_risk: string;
 }
 
 export interface AiEvaluation {
   picks: AiPick[];
+  /** "marketRegimeSummary": one sentence on how today's cues affect follow-through. */
+  market_regime_summary: string;
   model: string;
   evaluated_at_iso: string;
 }
-
-const SYSTEM_INSTRUCTION = `You are the evaluation layer of a deterministic NSE equity screener.
-Every candidate has already passed a hard technical filter (price above 20-EMA, RSI 55–72, volume > 1.5x the 20-day average).
-Your job: pick the 2–3 highest-conviction bullish setups for today's Indian session and explain why in plain English.
-
-Hard rules:
-1. Choose symbols ONLY from the provided candidates. Never invent a ticker.
-2. NEVER state, estimate or alter any price, target, stop-loss, entry or rupee amount. Levels are computed separately in code. Do not write "₹", "Rs" or "INR".
-3. Use only numbers that appear in the input (percentages, RSI, volume multiples). Do not fabricate statistics.
-4. The news catalyst must come only from the supplied headlines. If a candidate has no headlines, say so plainly — do not imply news exists.
-5. Weigh the overnight US cue (especially Nasdaq for IT names), the Nifty regime, technical quality (volume expansion, RSI headroom below 72, 20-EMA above 50-EMA, not over-stretched above the 20-EMA) and catalyst quality.
-6. If the regime is bearish, lower conviction scores accordingly.
-7. Rank by conviction, highest first. If fewer than 2 candidates are provided, return only those.
-
-Style: "catalyst" is one punchy line of at most 48 characters, e.g. "Nasdaq IT tailwind + 2.4x volume breakout". Each breakdown field is one sentence of at most 140 characters.`;
 
 /** JSON-safe Gemini input. Also used verbatim as the AI cache key, so identical data never pays twice. */
 export interface AiInput {
@@ -46,6 +46,8 @@ export interface AiInput {
     market_regime: string;
     regime_score: number;
     indices: Array<{ index: string; change_pct: number; above_20_ema: boolean }>;
+    /** When the last NSE session closed, so "released after yesterday's close" can be judged from the timestamps. */
+    last_session_close_ist: string;
     candidates: Array<Record<string, unknown>>;
   };
 }
@@ -53,6 +55,7 @@ export interface AiInput {
 export function buildAiInput(md: MarketSnapshot): AiInput {
   // Absolute prices are deliberately withheld: the model cannot echo or
   // distort a number it never sees. It reasons over relative metrics only.
+  const asOf = md.shortlist[0]?.as_of_session;
   return {
     symbols: md.shortlist.map((s) => s.symbol),
     payload: {
@@ -63,17 +66,17 @@ export function buildAiInput(md: MarketSnapshot): AiInput {
         change_pct: i.changePct,
         above_20_ema: i.aboveEma20,
       })),
+      last_session_close_ist: asOf ? formatDetectedAt(new Date(sessionCloseMs(asOf))) : "unknown",
       candidates: md.shortlist.map((s) => ({
         symbol: s.symbol,
         company: s.name,
         sector: s.sector,
-        day_change_pct: s.day_change_pct,
-        rsi_14: s.rsi14,
-        volume_ratio_vs_20d: s.volume_ratio,
-        pct_above_20_ema: Number(pctAboveEma20(s).toFixed(2)),
-        ema20_above_ema50: s.ema20 > s.ema50,
-        atr_pct_of_price: Number(((s.atr14 / s.current_price) * 100).toFixed(2)),
-        headlines_last_24h: (md.news[s.symbol] ?? []).map((n) => ({
+        rsi: s.rsi14,
+        rvol: s.volume_ratio,
+        atrPercent: s.atr_pct,
+        coilRatio: s.coil_ratio,
+        sma20ExtensionPct: s.sma20_extension_pct,
+        headlinesLast24h: (md.news[s.symbol] ?? []).map((n) => ({
           title: n.title,
           source: n.source,
           published: formatDetectedAt(new Date(n.publishedAt)),
@@ -85,9 +88,11 @@ export function buildAiInput(md: MarketSnapshot): AiInput {
 
 function responseSchema(symbols: string[]) {
   const maxItems = Math.min(3, symbols.length);
+  const keys = ["rank", "symbol", "convictionScore", "catalystCategory", "catalystFreshness", "whyItWillExpandToday", "executionRisk"];
   return {
     type: "object",
     properties: {
+      marketRegimeSummary: { type: "string", description: "One sentence, no prices." },
       picks: {
         type: "array",
         minItems: Math.min(2, symbols.length),
@@ -95,22 +100,21 @@ function responseSchema(symbols: string[]) {
         items: {
           type: "object",
           properties: {
+            rank: { type: "integer", minimum: 1, maximum: 3 },
             symbol: { type: "string", enum: symbols, description: "Ticker copied exactly from the candidates." },
-            conviction: { type: "integer", minimum: 1, maximum: 99 },
-            catalyst: { type: "string", description: "One line, at most 48 characters, no prices." },
-            global_cue: { type: "string", description: "Global/sector cue in one sentence, no prices." },
-            technical_trigger: { type: "string", description: "Technical trigger in one sentence, no prices." },
-            news_catalyst: {
-              type: "string",
-              description: "From supplied headlines only; say none if there are none. No prices.",
-            },
+            convictionScore: { type: "integer", minimum: 1, maximum: 99 },
+            catalystCategory: { type: "string", enum: [...CATALYST_CATEGORIES] },
+            catalystFreshness: { type: "string", enum: [...CATALYST_FRESHNESS] },
+            whyItWillExpandToday: { type: "string", description: "Two sentences, no prices." },
+            executionRisk: { type: "string", description: "One short phrase, no prices." },
           },
-          required: ["symbol", "conviction", "catalyst", "global_cue", "technical_trigger", "news_catalyst"],
-          propertyOrdering: ["symbol", "conviction", "catalyst", "global_cue", "technical_trigger", "news_catalyst"],
+          required: keys,
+          propertyOrdering: keys,
         },
       },
     },
-    required: ["picks"],
+    required: ["marketRegimeSummary", "picks"],
+    propertyOrdering: ["marketRegimeSummary", "picks"],
   };
 }
 
@@ -121,17 +125,29 @@ export function mentionsPrice(text: string): boolean {
   return PRICE_PATTERN.test(text);
 }
 
-function isAiPick(v: unknown): v is AiPick {
+interface RawPick {
+  rank?: unknown;
+  symbol: string;
+  convictionScore: number;
+  catalystCategory?: unknown;
+  catalystFreshness?: unknown;
+  whyItWillExpandToday: string;
+  executionRisk: string;
+}
+
+function isRawPick(v: unknown): v is RawPick {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
   return (
     typeof o.symbol === "string" &&
-    typeof o.conviction === "number" &&
-    typeof o.catalyst === "string" &&
-    typeof o.global_cue === "string" &&
-    typeof o.technical_trigger === "string" &&
-    typeof o.news_catalyst === "string"
+    typeof o.convictionScore === "number" &&
+    typeof o.whyItWillExpandToday === "string" &&
+    typeof o.executionRisk === "string"
   );
+}
+
+function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | null {
+  return typeof value === "string" ? (allowed.find((a) => a === value.trim()) ?? null) : null;
 }
 
 async function callModel(ai: GoogleGenAI, model: string, payload: unknown, symbols: string[]) {
@@ -140,7 +156,7 @@ async function callModel(ai: GoogleGenAI, model: string, payload: unknown, symbo
     contents: [
       {
         role: "user",
-        parts: [{ text: `Screened candidates (JSON):\n${JSON.stringify(payload)}` }],
+        parts: [{ text: `Screened candidates (JSON). Choose symbols only from this list:\n${JSON.stringify(payload)}` }],
       },
     ],
     config: {
@@ -184,26 +200,38 @@ export async function evaluateWithGemini(args: {
   } catch (err: unknown) {
     throw new Error(`Gemini returned invalid JSON: ${errorMessage(err)}`);
   }
-  const rawPicks = (parsed as { picks?: unknown }).picks;
+  const root = parsed as { picks?: unknown; marketRegimeSummary?: unknown };
+  const rawPicks = root.picks;
   if (!Array.isArray(rawPicks)) throw new Error("Gemini response missing picks[]");
 
   const allowed = new Set(symbols);
   const seen = new Set<string>();
-  const picks: AiPick[] = [];
-  for (const p of rawPicks) {
-    if (!isAiPick(p) || !allowed.has(p.symbol) || seen.has(p.symbol)) continue;
+  const valid: Array<{ pick: AiPick; rank: number }> = [];
+  rawPicks.forEach((p: unknown, index: number) => {
+    if (!isRawPick(p) || !allowed.has(p.symbol) || seen.has(p.symbol)) return;
     seen.add(p.symbol);
-    picks.push({
-      symbol: p.symbol,
-      conviction: Math.round(Math.min(99, Math.max(1, p.conviction))),
-      catalyst: truncate(p.catalyst.trim(), 56),
-      global_cue: truncate(p.global_cue.trim(), 180),
-      technical_trigger: truncate(p.technical_trigger.trim(), 180),
-      news_catalyst: truncate(p.news_catalyst.trim(), 180),
+    valid.push({
+      rank: typeof p.rank === "number" && Number.isFinite(p.rank) ? p.rank : index + 1,
+      pick: {
+        symbol: p.symbol,
+        conviction: Math.round(Math.min(99, Math.max(1, p.convictionScore))),
+        catalyst_category: oneOf(CATALYST_CATEGORIES, p.catalystCategory),
+        catalyst_freshness: oneOf(CATALYST_FRESHNESS, p.catalystFreshness),
+        thesis: truncate(p.whyItWillExpandToday.trim(), 260),
+        execution_risk: truncate(p.executionRisk.trim(), 90),
+      },
     });
-  }
-  if (picks.length === 0) throw new Error("Gemini returned no valid picks from the shortlist");
-  return { picks: picks.slice(0, 3), model, evaluated_at_iso: new Date().toISOString() };
+  });
+  if (valid.length === 0) throw new Error("Gemini returned no valid picks from the shortlist");
+  // The model's own rank decides the order; ties keep the order it wrote them in.
+  valid.sort((a, b) => a.rank - b.rank);
+  const summary = typeof root.marketRegimeSummary === "string" ? truncate(root.marketRegimeSummary.trim(), 200) : "";
+  return {
+    picks: valid.slice(0, 3).map((v) => v.pick),
+    market_regime_summary: summary,
+    model,
+    evaluated_at_iso: new Date().toISOString(),
+  };
 }
 
 /** Cheap round-trip used by the "Test key" button. */

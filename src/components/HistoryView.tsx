@@ -65,22 +65,26 @@ export function HistoryView({ entries, onClear, onGoToPicks }: Props) {
                       {formatClock(new Date(e.detected_at_iso))}
                     </time>
                     <div className="min-w-0 flex-1">
-                      <p className="font-ticker truncate text-[19px] font-bold leading-none text-fg">{e.symbol}</p>
-                      <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] text-muted">
-                        <span className="truncate">{e.name}</span>
+                      <p className="flex min-w-0 items-center gap-1.5">
+                        <span className="font-ticker truncate text-[19px] font-bold leading-none text-fg">{e.symbol}</span>
+                        {e.gap_status === "WAIT_FOR_PULLBACK" ? (
+                          <span className="shrink-0 rounded bg-caution/15 px-1.5 py-px text-[10.5px] font-semibold text-caution">Pullback</span>
+                        ) : null}
                         {e.mode === "demo" || e.simulated ? (
                           <span className="shrink-0 rounded bg-caution/15 px-1.5 py-px text-[10.5px] font-semibold text-caution">
                             {e.mode === "demo" ? "Demo" : "Simulated"}
                           </span>
                         ) : null}
                       </p>
+                      <p className="mt-1 truncate text-[12px] text-muted">{e.name}</p>
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="num text-[14px] font-semibold text-fg">{rupees(e.entry_low)}</p>
-                      <p className="num mt-0.5 text-[11.5px]">
-                        <span className="text-bull">T {plain(e.target_price)}</span>{" "}
-                        <span className="text-bear">SL {plain(e.stop_loss)}</span>
+                      <p className="num mt-0.5 text-[11.5px] leading-snug text-bull">
+                        T1 {plain(e.target_price)}
+                        {e.target_2 ? <> · T2 {plain(e.target_2)}</> : null}
                       </p>
+                      <p className="num text-[11.5px] leading-snug text-bear">SL {plain(e.stop_loss)}</p>
                     </div>
                   </li>
                 ))}

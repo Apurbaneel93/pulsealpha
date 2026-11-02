@@ -5,7 +5,16 @@ import { buildAiInput, mentionsPrice, type AiEvaluation, type AiInput, type AiPi
 import { computeLevels } from "./levels";
 import { fetchMarketCues, scanUniverse } from "./market-data";
 import { fetchHeadlines } from "./news";
-import { buildBoard, passesHardFilter, rankByRules, rulesBreakdown, rulesCatalyst } from "./rules-engine";
+import {
+  buildBoard,
+  classifyCatalyst,
+  HARD_FILTER,
+  passesHardFilter,
+  rankByRules,
+  regimeSummary,
+  rulesBreakdown,
+  rulesExecutionRisk,
+} from "./rules-engine";
 import { formatDetectedAt } from "./time";
 import { WATCHLIST } from "./watchlist";
 import type {
@@ -167,6 +176,7 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
   let engine: Engine = "rules";
   let model: string | null = null;
   let aiPicks: AiPick[] = [];
+  let aiRegime = "";
   let aiCache: CacheStatus | null = null;
   if (isLiveData && shortlist.length > 0) {
     const input = buildAiInput(md);
@@ -175,12 +185,14 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
       if (userKey) {
         const ai = await deps.evaluateWithKey(input, userKey, opts.model ?? null);
         aiPicks = ai.picks;
+        aiRegime = ai.market_regime_summary;
         model = ai.model;
         aiCache = "miss";
         engine = "gemini";
       } else if (deps.evaluateShared) {
         const res = await deps.evaluateShared(input, opts.model ?? null);
         aiPicks = res.ai.picks;
+        aiRegime = res.ai.market_regime_summary;
         model = res.ai.model;
         aiCache = res.cache;
         engine = "gemini";
@@ -193,35 +205,59 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
   }
 
   // 3. Merge: AI chooses order + prose; code owns every number.
+  const regimeText = aiRegime && !mentionsPrice(aiRegime) ? aiRegime : regimeSummary(market);
   const ruleRanked = rankByRules(shortlist, market, newsMap);
   const bySymbol = new Map(shortlist.map((s) => [s.symbol, s]));
+  /** A stock whose only headlines recap a move that already happened: institutions are selling into it, not buying. */
+  const isRecap = (s: TechnicalSnapshot) =>
+    (newsMap.get(s.symbol)?.length ?? 0) > 0 && classifyCatalyst(newsMap.get(s.symbol) ?? [], s.as_of_session).freshness === "Priced-In Recap";
+
   const chosen: Array<{ snapshot: TechnicalSnapshot; ai: AiPick | null; conviction: number }> = [];
+  let droppedRecaps = 0;
   for (const p of aiPicks) {
     const snapshot = bySymbol.get(p.symbol);
-    if (snapshot) chosen.push({ snapshot, ai: p, conviction: p.conviction });
+    if (!snapshot) continue;
+    // The prompt tells the model to disqualify recaps. If it flags one anyway, believe the flag.
+    if (p.catalyst_freshness === "Priced-In Recap") {
+      droppedRecaps += 1;
+      continue;
+    }
+    chosen.push({ snapshot, ai: p, conviction: p.conviction });
   }
   if (chosen.length === 0) {
     // Rules-only: take the top 3, but drop a weak third (conviction < 50) rather than pad the board.
-    for (const r of ruleRanked.slice(0, 3)) {
+    for (const r of ruleRanked) {
+      if (chosen.length >= 3) break;
+      if (isRecap(r.snapshot)) {
+        droppedRecaps += 1;
+        continue;
+      }
       if (chosen.length < 2 || r.conviction >= 50) chosen.push({ snapshot: r.snapshot, ai: null, conviction: r.conviction });
     }
   } else {
     // AI returned fewer than 2: top up from the deterministic ranking.
     for (const r of ruleRanked) {
       if (chosen.length >= 2) break;
-      if (!chosen.some((c) => c.snapshot.symbol === r.snapshot.symbol)) {
-        chosen.push({ snapshot: r.snapshot, ai: null, conviction: r.conviction });
-      }
+      if (chosen.some((c) => c.snapshot.symbol === r.snapshot.symbol) || isRecap(r.snapshot)) continue;
+      chosen.push({ snapshot: r.snapshot, ai: null, conviction: r.conviction });
     }
+  }
+  if (droppedRecaps > 0) {
+    notices.push(
+      `${droppedRecaps} candidate${droppedRecaps === 1 ? "" : "s"} skipped: the news only recaps a move that already happened.`,
+    );
   }
 
   // Setups are "detected" when the data behind them was fetched — identical for
   // every user served from the same cache entry.
   const detectedAt = new Date(md.fetched_at_iso);
   const detected = formatDetectedAt(detectedAt);
+  const safe = (text: string | undefined, alt: string) => (text && text.trim() && !mentionsPrice(text) ? text.trim() : alt);
   const picks: Pick[] = chosen.slice(0, 3).map(({ snapshot: s, ai, conviction }, i) => {
-    const fallback = rulesBreakdown(s, market, newsMap.get(s.symbol) ?? []);
-    const safe = (text: string | undefined, alt: string) => (text && !mentionsPrice(text) ? text : alt);
+    const news = newsMap.get(s.symbol) ?? [];
+    const fallback = rulesBreakdown(s, market, news);
+    const classified = classifyCatalyst(news, s.as_of_session);
+    const category = ai?.catalyst_category ?? classified.category;
     return {
       rank: i + 1,
       symbol: s.symbol,
@@ -229,17 +265,30 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
       sector: s.sector,
       current_price: s.current_price,
       day_change_pct: s.day_change_pct,
-      levels: computeLevels(s.current_price, s.atr14),
-      metrics: { ema20: s.ema20, ema50: s.ema50, rsi14: s.rsi14, atr14: s.atr14, volume_ratio: s.volume_ratio },
+      levels: computeLevels(s.current_price, s.prev_close, s.atr14),
+      metrics: {
+        sma20: s.sma20,
+        ema20: s.ema20,
+        ema50: s.ema50,
+        rsi14: s.rsi14,
+        atr14: s.atr14,
+        atr_pct: s.atr_pct,
+        coil_ratio: s.coil_ratio,
+        sma20_extension_pct: s.sma20_extension_pct,
+        volume_ratio: s.volume_ratio,
+      },
       spark: s.spark,
       conviction,
-      catalyst: safe(ai?.catalyst, rulesCatalyst(s, market)),
+      catalyst: category,
+      catalyst_category: category,
+      catalyst_freshness: ai?.catalyst_freshness ?? classified.freshness,
+      execution_risk: safe(ai?.execution_risk, rulesExecutionRisk(s)),
       breakdown: {
-        global_cue: safe(ai?.global_cue, fallback.global_cue),
-        technical_trigger: safe(ai?.technical_trigger, fallback.technical_trigger),
-        news_catalyst: safe(ai?.news_catalyst, fallback.news_catalyst),
+        global_cue: regimeText === regimeSummary(market) ? fallback.global_cue : regimeText,
+        technical_trigger: fallback.technical_trigger,
+        thesis: safe(ai?.thesis, fallback.thesis),
       },
-      news: newsMap.get(s.symbol) ?? [],
+      news,
       detected_at: detected,
       detected_at_iso: detectedAt.toISOString(),
     };
@@ -247,7 +296,7 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
 
   if (picks.length === 0) {
     notices.push(
-      `None of the ${md.universe_size} scanned stocks cleared the filter (price > 20-EMA, RSI 55–72, volume > 1.5x). No picks are better than forced picks.`,
+      `None of the ${md.universe_size} scanned stocks cleared the momentum screen (above the 20-DMA but within ${HARD_FILTER.maxExtensionPct}% of it, RSI ${HARD_FILTER.rsiMin}–${HARD_FILTER.rsiMax}, yesterday's range ≤ ${HARD_FILTER.maxCoilRatio}x ATR, ATR ≥ ${HARD_FILTER.minAtrPct}% of price, volume ≥ ${HARD_FILTER.volumeRatioMin}x). No picks are better than forced picks.`,
     );
   }
 
@@ -261,6 +310,7 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
     scanned_at: detected,
     scanned_at_iso: detectedAt.toISOString(),
     market,
+    regime_summary: regimeText,
     universe_size: md.universe_size,
     shortlist_size: md.passed_count,
     picks,

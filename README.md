@@ -1,6 +1,6 @@
 # PulseAlpha
 
-A mobile-first PWA (with a full desktop layout) that surfaces 2–3 bullish NSE setups a day, each stamped with the exact IST time it was detected, a one-line catalyst, and ATR-based buy zone, target and stop-loss.
+A mobile-first PWA (with a full desktop layout) that surfaces 2–3 bullish NSE setups a day, each stamped with the exact IST time it was detected, a catalyst (with how fresh it is), and ATR-based levels: a buy zone, a stop-loss and two staggered targets.
 
 Next.js 16 (App Router) · TypeScript (strict + `noUncheckedIndexedAccess`) · Tailwind CSS 4 · Lucide · `yahoo-finance2` v4 · `@google/genai`
 
@@ -87,24 +87,38 @@ Stored only in the browser (`localStorage`, up to 300 rows). Each stock is logge
 | Step | What happens | Where |
 |---|---|---|
 | 1. Global cues | Last-session change of `^GSPC`, `^IXIC`, `^NSEI` + Nifty vs its 20-EMA → regime score → Bullish / Neutral / Bearish | `lib/market-data.ts`, `lib/market-data-pure.ts` |
-| 2. Indicators | ~90 liquid Nifty 200 names: 20/50-EMA, Wilder RSI(14), Wilder ATR(14), volume ratio — pure TypeScript | `lib/indicators.ts` |
-| 3. Hard filter | Price > 20-EMA **and** 55 ≤ RSI ≤ 72 **and** volume ratio > 1.5x | `lib/rules-engine.ts` |
-| 4. Catalysts | Google News RSS per shortlisted symbol, kept only if published in the last 24 h | `lib/news.ts` |
-| 5. Evaluation | Gemini with a JSON schema whose `symbol` field is an **enum of the shortlist** → it cannot name a stock that didn't pass | `lib/gemini.ts` |
-| 6. Levels | `entry` = price → price + 0.15·ATR, `target` = price + 2.5·ATR, `stop` = price − 1.5·ATR, rounded to the ₹0.05 tick | `lib/levels.ts` |
+| 2. Indicators | ~90 liquid Nifty 200 names: 20-day SMA (the "20-DMA"), 20/50-EMA, Wilder RSI(14), Wilder ATR(14), relative volume, ATR % of price, coil ratio, 20-DMA extension — pure TypeScript | `lib/indicators.ts`, `lib/market-data-pure.ts` |
+| 3. Momentum screen | All six must hold: price above the 20-DMA **but** no more than 4.5% above it; 52 ≤ RSI ≤ 65; yesterday's high−low ≤ 1.25 × ATR (the **coil ratio**); ATR ≥ 2.2% of price; volume ≥ 1.5 × its 20-day average. Every limit is inclusive and checked on the values shown on the card. | `lib/rules-engine.ts` (`HARD_FILTER`) |
+| 4. Catalysts | Google News RSS per shortlisted symbol, kept only if published in the last 24 h, with timestamps | `lib/news.ts` |
+| 5. Evaluation | Gemini gets, per survivor, only `rsi`, `rvol`, `atrPercent`, `coilRatio`, `sma20ExtensionPct` and the headlines (with IST timestamps), plus the market regime and the time the last session closed. The response schema's `symbol` is an **enum of the shortlist**, so it cannot name a stock that didn't pass. It returns a rank, conviction, catalyst category and freshness (`Unpriced Post-Market`, `Ongoing Multi-Day`, `Priced-In Recap`), a two-sentence thesis and an execution risk. A pick it flags `Priced-In Recap` is dropped. | `lib/gemini.ts`, `lib/gemini-prompt.ts` |
+| 6. Levels | See below. All maths is in code. | `lib/levels.ts` |
+
+### Levels and the Gap Guard
+
+```
+gap        = (price − previous close) ÷ ATR14
+gap > 0.75 → WAIT_FOR_PULLBACK   base = previous close + 0.35 × ATR   (no VWAP feed, so the previous close is the anchor)
+otherwise  → ACTIVE_BUY_ZONE     base = current price
+
+buy zone = base ± 0.10 × ATR      stop-loss = base − 0.90 × ATR
+Target 1 = base + 1.15 × ATR      "Book 60% & Trail SL to Breakeven"
+Target 2 = base + 2.00 × ATR      "Book 40% or Trail 15m 9-EMA"
+```
+
+All levels are rounded to the ₹0.05 tick. Each card shows the Gap Guard status, both targets, and `ATR%`, `RVOL` and `Coil Ratio` pills. After the close, "price" is the last close and "previous close" the close before it, so the gap is that session's move measured in ATRs.
 
 ### Zero-hallucination guarantees
 
-- **The model never sees an absolute price.** It receives only relative metrics (% above 20-EMA, RSI, volume multiple, ATR as % of price), so it cannot echo or distort a level.
-- **Every number on a card comes from code.** AI output is limited to: which shortlisted symbols, their order, a conviction score, and prose.
+- **The model never sees an absolute price.** It receives only relative metrics (RSI, RVOL, ATR %, coil ratio, % above the 20-DMA) and headlines, so it cannot echo or distort a level.
+- **Every number on a card comes from code.** AI output is limited to: which shortlisted symbols, their order, a conviction score, a category and freshness label, and prose.
 - **AI prose that mentions ₹/Rs/INR or a "target of…" is discarded** and replaced with deterministic copy built from the real metrics.
 - Hallucinated tickers, duplicates and malformed JSON are dropped; if Gemini fails, the rules engine ranks instead and the feed says so.
-- If no stock passes the filter, the feed shows an empty state instead of forcing picks.
+- If no stock passes the screen, the feed shows an empty state instead of forcing picks. The screen is strict, so expect some days with none.
 
 ### Fallbacks
 
 - Yahoo unusable (index data fails, or < 35% of symbols load) and nothing cached → **simulated data**, flagged with an amber banner and a `Simulated` tag in history. Simulated data is never cached.
-- During NSE hours the forming daily bar is excluded: indicators use completed sessions, the live price is used for "price > 20-EMA" and the levels.
+- During NSE hours the forming daily bar is excluded: indicators use completed sessions, the live price is used for the 20-DMA test and the levels.
 - `gemini-2.5-flash` was retired on 16 Oct 2026, so the default model is `gemini-3.5-flash`. On a 404 the server retries once with `gemini-flash-latest`. Override via `GEMINI_MODEL` or the Model field in API Setup.
 
 ## API
@@ -137,7 +151,7 @@ The site is public; the owner's controls are not. Every owner-only route checks 
 Deploy a **Preview** on Vercel first (any non-production branch), then open:
 
 - `https://<preview-url>/api/scan` — today's real ranked picks with every level.
-- `https://<preview-url>/api/verify` — today's filter funnel, the last 3 sessions and computed indicators for RELIANCE, HDFCBANK, ICICIBANK, INFY and TCS (compare with any chart), and a replay of the same filter and ATR levels over roughly the last 9 months. It reports target-hit rate, stop-hit rate, win rate, average return and profit factor for the app's top picks, for all signals, and for a no-filter baseline. Built once per IST day and cached for 6 hours.
+- `https://<preview-url>/api/verify` — today's filter funnel, the last 3 sessions and computed indicators for RELIANCE, HDFCBANK, ICICIBANK, INFY and TCS (compare with any chart), and a replay of the same screen and levels over roughly the last 9 months, with the 60/40 T1/T2 exits. It reports how often Target 1 and Target 2 are reached, stop-outs, breakeven exits, win rate, average return and profit factor for the app's top picks, for all signals, and for a no-filter baseline. Built once per IST day and cached for 6 hours.
 
 Or run the same check on your own machine:
 
@@ -146,17 +160,18 @@ npm run verify                        # rules engine
 GEMINI_API_KEY=... npm run verify     # ranked by Gemini, as on Vercel
 ```
 
-How to read it: with a +2.5 ATR target and −1.5 ATR stop, the strategy breaks even at a 37.5% target-hit rate if every trade ends at one or the other. Because some trades time out, **average return per trade** and **profit factor** (> 1 means profitable) are the honest headline numbers — and they should beat the baseline, or the filter isn't adding anything. Costs aren't deducted; allow ~0.25% per round trip.
+How to read it: a winner books 60% at +1.15 ATR and the rest at breakeven or +2.00 ATR, and a loser costs 0.90 ATR, so if no runner ever reached Target 2 the plan would need Target 1 to be hit about 56.6% of the time to break even. Target 2 hits pull that down. **Average return per trade** and **profit factor** (> 1 means profitable) are the honest headline numbers, and they should beat the baseline, or the screen isn't adding anything. Daily bars hide the order of events inside a session, so the replay assumes the stop hits before Target 1 in the same session, applies the breakeven stop from the session after Target 1, and cannot replay the 15-minute 9-EMA trail. Costs aren't deducted; allow ~0.25% per round trip. The new screen has not been validated on real data in this repo: run it before trading on it.
 
 ## Tests
 
 ```bash
-npm test             # indicators vs the StockCharts RSI reference, ATR, levels, IST formatting, regime, demo board
+npm test             # indicators vs the StockCharts RSI reference, ATR, snapshot ratios, IST formatting, regime, demo board,
+                     # then the strategy: the six-check screen, gap-guard levels, catalyst freshness, T1/T2 exits, the Gemini prompt
 npm run test:live    # full live pipeline with Yahoo, Google News and Gemini mocked at the fetch layer
 npm run build && npm run test:cache
                      # real `next start` + mocked upstream: counts upstream calls across requests and a restart
 CACHE_TEST_REVALIDATE=1 npm run test:cache   # also waits out the 180 s window (~3 min)
-npm run test:chart   # live price and chart logic: IST sessions, payloads, EMA alignment, quote maths, buy-zone status
+npm run test:chart   # live price and chart logic: IST sessions, payloads, EMA alignment, quote maths, buy-zone and target status
 npm run build && npm run test:quotes
                      # real `next start`: /api/quotes and /api/chart validation, shapes, cache behaviour, refresh after 15 s
 npm run test:owner   # owner-mode primitives: tokens, expiry, forgery, passcode rotation, CSRF guard, lockout

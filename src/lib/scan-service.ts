@@ -38,7 +38,7 @@ const cachedMarketData = unstable_cache(
     void istDay;
     return loadLiveMarketData(new Date());
   },
-  ["pulsealpha:market-data:v2"],
+  ["pulsealpha:market-data:v3"],
   { revalidate: MARKET_REVALIDATE_SECONDS, tags: [CACHE_TAGS.market] },
 );
 
@@ -48,7 +48,7 @@ const cachedServerEvaluation = unstable_cache(
     if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
     return evaluateWithGemini({ apiKey, model, input });
   },
-  ["pulsealpha:ai-eval:v1"],
+  ["pulsealpha:ai-eval:v2"],
   { revalidate: AI_REVALIDATE_SECONDS, tags: [CACHE_TAGS.ai] },
 );
 

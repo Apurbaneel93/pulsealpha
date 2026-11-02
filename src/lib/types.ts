@@ -72,10 +72,21 @@ export interface TechnicalSnapshot {
   current_price: number;
   prev_close: number;
   day_change_pct: number;
+  /** 20-day simple moving average (the "20-DMA" the screen is built on). */
+  sma20: number;
   ema20: number;
   ema50: number;
   rsi14: number;
   atr14: number;
+  /** ATR(14) as a percentage of price: how much a stock can move in a day. */
+  atr_pct: number;
+  /** Last completed session's high-low range divided by ATR(14). Below ~1.25 = coiled, not yet expanded. */
+  coil_ratio: number;
+  /** How far price sits above the 20-DMA, in percent (negative = below). */
+  sma20_extension_pct: number;
+  /** (price − previous close) ÷ ATR(14): how far the stock has already run. */
+  opening_gap_atr: number;
+  /** Relative volume: latest completed session ÷ the prior 20-session average. */
   volume_ratio: number;
   latest_volume: number;
   avg_volume20: number;
@@ -92,19 +103,38 @@ export interface NewsItem {
   publishedAt: string;
 }
 
+/** ACTIVE_BUY_ZONE: buy near the current price. WAIT_FOR_PULLBACK: it has already run, so don't chase. */
+export type GapStatus = "ACTIVE_BUY_ZONE" | "WAIT_FOR_PULLBACK";
+
 export interface PriceLevels {
+  gap_status: GapStatus;
+  /** (price − previous close) ÷ ATR(14) at detection time. */
+  opening_gap_atr: number;
+  /** The price the plan is built around: the current price, or previous close + 0.35 ATR after a spike. */
+  base_entry: number;
   entry_low: number;
   entry_high: number;
-  target_price: number;
   stop_loss: number;
-  target_pct: number;
+  /** Target 1, +1.15 ATR: book 60% and trail the stop to breakeven. */
+  target_1: number;
+  /** Target 2, +2.00 ATR: book the other 40%, or trail the 15-minute 9-EMA. */
+  target_2: number;
+  /** Distances from `base_entry`, in percent. */
+  target_1_pct: number;
+  target_2_pct: number;
   stop_pct: number;
 }
 
+export type CatalystCategory = "Order Win" | "Earnings Beat" | "Regulatory" | "Sector Tailwind" | "Technical Coil Breakout";
+export type CatalystFreshness = "Unpriced Post-Market" | "Ongoing Multi-Day" | "Priced-In Recap";
+
 export interface ResearchBreakdown {
+  /** The market regime in one sentence. */
   global_cue: string;
+  /** Deterministic: what the coil, RSI, volume and extension numbers say. */
   technical_trigger: string;
-  news_catalyst: string;
+  /** Why fresh buyers should step in today (2 sentences). */
+  thesis: string;
 }
 
 export interface Pick {
@@ -116,15 +146,25 @@ export interface Pick {
   day_change_pct: number;
   levels: PriceLevels;
   metrics: {
+    sma20: number;
     ema20: number;
     ema50: number;
     rsi14: number;
     atr14: number;
+    atr_pct: number;
+    coil_ratio: number;
+    sma20_extension_pct: number;
+    /** Relative volume (RVOL). */
     volume_ratio: number;
   };
   spark: number[];
   conviction: number;
+  /** One-line catalyst: the category, e.g. "Order Win". */
   catalyst: string;
+  catalyst_category: CatalystCategory;
+  catalyst_freshness: CatalystFreshness;
+  /** What would invalidate the setup, e.g. "Skip if the opening gap exceeds 0.75 ATR". */
+  execution_risk: string;
   breakdown: ResearchBreakdown;
   news: NewsItem[];
   detected_at: string;
@@ -151,25 +191,34 @@ export interface MarketSnapshot {
   news: Record<string, NewsItem[]>;
   /** Stocks with usable data this scan (denominator for the board). */
   scanned: number;
-  /** Every stock above its 20-EMA, ranked: checks passed, then score. */
+  /** Every stock above its 20-DMA, ranked: checks passed, then score. */
   board: BoardRow[];
 }
 
-/** One row of the full bullish ranking: every scanned stock trading above its 20-EMA. */
+/** The six screening checks. All six passing = a full setup. */
+export type CheckKey = "trend" | "extension" | "rsi" | "coil" | "volatility" | "volume";
+export const CHECK_KEYS: readonly CheckKey[] = ["trend", "extension", "rsi", "coil", "volatility", "volume"];
+
+/** One row of the full bullish ranking: every scanned stock trading above its 20-DMA. */
 export interface BoardRow {
   symbol: string;
   name: string;
   sector: Sector;
   price: number;
+  prev_close: number;
   change_pct: number;
   rsi14: number;
+  /** Relative volume (RVOL). */
   volume_ratio: number;
-  pct_above_ema20: number;
+  atr_pct: number;
+  coil_ratio: number;
+  /** Percent above the 20-DMA. */
+  sma20_extension_pct: number;
   ema20_above_ema50: boolean;
   atr14: number;
-  /** The three hard-filter checks. `trend` is always true on the board. */
-  checks: { trend: boolean; rsi: boolean; volume: boolean };
-  /** How many of the three checks pass (3 = a full setup). */
+  /** `trend` (above the 20-DMA) is always true on the board. */
+  checks: Record<CheckKey, boolean>;
+  /** How many of the six checks pass (6 = a full setup). */
   passed: number;
   /** Rules-engine bullish score, 1–99. */
   score: number;
@@ -190,6 +239,8 @@ export interface ScanResult {
   scanned_at: string;
   scanned_at_iso: string;
   market: MarketCues;
+  /** One-sentence read of how today's global and Nifty cues affect follow-through (Gemini's, or the rules engine's). */
+  regime_summary?: string;
   universe_size: number;
   shortlist_size: number;
   picks: Pick[];
@@ -213,7 +264,11 @@ export interface HistoryEntry {
   name: string;
   entry_low: number;
   entry_high: number;
+  /** Target 1. Entries saved before the T1/T2 exits existed have only this. */
   target_price: number;
+  /** Target 2; absent on older entries. */
+  target_2?: number;
+  gap_status?: GapStatus;
   stop_loss: number;
   conviction: number;
   catalyst: string;

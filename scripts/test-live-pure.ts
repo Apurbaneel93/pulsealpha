@@ -130,7 +130,7 @@ console.log("Live price and chart tests");
 
 // ── buy-zone status ─────────────────────────────────────────────────────────
 {
-  const lv = { entry_low: 100, entry_high: 101, target_price: 110, stop_loss: 95 };
+  const lv = { entry_low: 100, entry_high: 101, target_1: 110, target_2: 120, stop_loss: 95, gap_status: "ACTIVE_BUY_ZONE" as const };
   assert.equal(planStatus(100.5, lv).kind, "in_zone");
   assert.equal(planStatus(100, lv).kind, "in_zone");
   assert.equal(planStatus(101, lv).kind, "in_zone");
@@ -138,11 +138,17 @@ console.log("Live price and chart tests");
   assert.deepEqual(planStatus(98, lv), { kind: "below", label: "2.0% below buy zone", tone: "neutral" });
   assert.equal(planStatus(101.04, lv).kind, "in_zone", "0.04% over the top edge still reads as in the zone");
   assert.equal(planStatus(99.96, lv).kind, "in_zone");
-  assert.equal(planStatus(110, lv).kind, "target");
-  assert.equal(planStatus(120, lv).kind, "target");
+  assert.deepEqual(planStatus(110, lv), { kind: "target_1", label: "Target 1 reached", tone: "bull" });
+  assert.deepEqual(planStatus(119.95, lv), { kind: "target_1", label: "Target 1 reached", tone: "bull" });
+  assert.deepEqual(planStatus(120, lv), { kind: "target_2", label: "Target 2 reached", tone: "bull" });
+  assert.equal(planStatus(130, lv).kind, "target_2");
   assert.equal(planStatus(95, lv).kind, "stop");
   assert.equal(planStatus(90, lv).kind, "stop");
-  ok("price vs plan: in zone, above, below, target reached, stop hit");
+  // After a spike the plan says wait: the same distance above the zone now reads as "don't chase".
+  const wait = { ...lv, gap_status: "WAIT_FOR_PULLBACK" as const };
+  assert.deepEqual(planStatus(103, wait), { kind: "above", label: "Don't chase: 2.0% above buy zone", tone: "caution" });
+  assert.equal(planStatus(100.5, wait).kind, "in_zone", "the pullback arrived: it is a buy zone again");
+  ok("price vs plan: in zone, above (and don't chase), below, Target 1, Target 2, stop hit");
 }
 
 // ── ticks, whitelist ────────────────────────────────────────────────────────

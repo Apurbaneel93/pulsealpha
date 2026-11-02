@@ -16,13 +16,13 @@ export interface VerifyReport {
   universe: number;
   loaded: number;
   failed: string[];
-  /** How today's watchlist falls through the hard filter. */
+  /** How many of today's watchlist stocks pass each check, and all six. */
   todayFunnel: FilterFunnel;
   /** Raw recent sessions + computed indicators, to cross-check against any charting site. */
   dataCheck: Array<{
     symbol: string;
     lastSessions: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }>;
-    computed: Pick<TechnicalSnapshot, "current_price" | "ema20" | "ema50" | "rsi14" | "atr14" | "volume_ratio"> | null;
+    computed: Pick<TechnicalSnapshot, "current_price" | "sma20" | "rsi14" | "atr14" | "atr_pct" | "coil_ratio" | "sma20_extension_pct" | "volume_ratio"> | null;
   }>;
   backtest: BacktestReport;
   assumptions: string[];
@@ -66,7 +66,16 @@ export async function buildVerifyReport(now = new Date()): Promise<VerifyReport>
           volume: c.volume,
         })),
         computed: s
-          ? { current_price: s.current_price, ema20: s.ema20, ema50: s.ema50, rsi14: s.rsi14, atr14: s.atr14, volume_ratio: s.volume_ratio }
+          ? {
+              current_price: s.current_price,
+              sma20: s.sma20,
+              rsi14: s.rsi14,
+              atr14: s.atr14,
+              atr_pct: s.atr_pct,
+              coil_ratio: s.coil_ratio,
+              sma20_extension_pct: s.sma20_extension_pct,
+              volume_ratio: s.volume_ratio,
+            }
           : null,
       },
     ];
@@ -84,7 +93,9 @@ export async function buildVerifyReport(now = new Date()): Promise<VerifyReport>
     assumptions: [
       "Signals use only data available at that day's close, with the app's own indicators, filter and ATR levels.",
       "Entry is the next session's open if it is at or below the top of the buy zone; otherwise the top of the zone if that session trades down to it; otherwise no trade.",
-      "Exit at target (+2.5 ATR) or stop-loss (−1.5 ATR); gaps fill at the open; if both are touched in one session the stop is assumed first.",
+      "Levels follow the card: buy zone ±0.10 ATR, stop −0.90 ATR, Target 1 +1.15 ATR, Target 2 +2.00 ATR. A stock that closed more than 0.75 ATR above its previous close is planned as a pullback entry (previous close + 0.35 ATR), so it often never fills.",
+      "Exits: 60% is sold at Target 1 and the stop moves to breakeven; the other 40% is sold at Target 2 or at breakeven. Returns are blended across both parts.",
+      "Daily bars hide the order of events inside a session, so ties go against the trade: the stop is assumed to hit before Target 1; the breakeven stop applies from the session after Target 1; gaps fill at the open. Intraday trailing (the 15-minute 9-EMA) cannot be replayed on daily data.",
       "Trades still open after the horizon exit at that session's close (counted as timeouts).",
       "Top picks = the app's board: top 2 per day by conviction, plus a third scoring ≥ 50. The macro term is identical across stocks on a day, so it is left out of the ranking here.",
       "Brokerage, taxes and slippage are not deducted (roughly 0.2–0.3% per round trip for delivery trades).",
