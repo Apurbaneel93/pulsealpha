@@ -100,6 +100,9 @@ try {
   ok((await api("/api/verify-key", jsonPost({}, { "x-gemini-key": "AIza-stolen" }))).status === 401, "POST /api/verify-key with a key: 401");
   ok((await api("/api/verify")).status === 401, "GET /api/verify: 401 (heavy report is owner-only)");
 
+  ok((await api("/api/quotes?symbols=LT")).status === 200, "GET /api/quotes: live prices are public");
+  ok((await api("/api/chart?symbol=LT&range=1d")).status === 200, "GET /api/chart: charts are public");
+
   const page = await api("/");
   ok(page.status === 200, "home page is public");
   const html = await page.text();

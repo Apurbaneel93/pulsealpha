@@ -20,10 +20,25 @@
 
   --animate-sweep: sweep 1.4s cubic-bezier(0.45, 0, 0.2, 1) infinite;
   --animate-rise: rise 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-flash-up: flash-up 1100ms ease-out;
+  --animate-flash-down: flash-down 1100ms ease-out;
+  --animate-live: live 1.8s ease-in-out infinite;
 
   @keyframes sweep {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(250%); }
+  }
+  @keyframes flash-up {
+    from { background-color: color-mix(in srgb, var(--color-bull) 32%, transparent); }
+    to { background-color: transparent; }
+  }
+  @keyframes flash-down {
+    from { background-color: color-mix(in srgb, var(--color-bear) 32%, transparent); }
+    to { background-color: transparent; }
+  }
+  @keyframes live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
   }
   @keyframes rise {
     from { opacity: 0; transform: translateY(10px); }

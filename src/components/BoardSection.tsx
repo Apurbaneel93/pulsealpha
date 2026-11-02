@@ -3,8 +3,10 @@
 import { useId, useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { computeLevels } from "@/lib/levels";
+import { Ticking } from "./LivePrice";
+import { StockChart } from "./StockChart";
 import { plain, rupees, signedPct } from "@/lib/format";
-import type { BoardRow } from "@/lib/types";
+import type { BoardRow, LiveQuote } from "@/lib/types";
 
 const INITIAL_ROWS = 12;
 
@@ -30,7 +32,7 @@ function CheckDots({ row }: { row: BoardRow }) {
   );
 }
 
-function Detail({ row }: { row: BoardRow }) {
+function Detail({ row, live }: { row: BoardRow; live?: LiveQuote }) {
   const missing = (["rsi", "volume"] as const).filter((k) => !row.checks[k]);
   const values = {
     trend: `${signedPct(row.pct_above_ema20, 1)} vs 20-day average`,
@@ -75,6 +77,7 @@ function Detail({ row }: { row: BoardRow }) {
           {missing.map((k) => CHECK_LABELS[k].toLowerCase()).join(" and ")}.
         </p>
       )}
+      <StockChart symbol={row.symbol} levels={row.passed === 3 ? lv : undefined} live={live} height={156} />
       <p className="mt-2 text-[11.5px] text-faint">
         {row.sector}. 20-day average {row.ema20_above_ema50 ? "above" : "below"} the 50-day.
       </p>
@@ -82,10 +85,12 @@ function Detail({ row }: { row: BoardRow }) {
   );
 }
 
-function Row({ row, rank, isPick }: { row: BoardRow; rank: number; isPick: boolean }) {
+function Row({ row, rank, isPick, live }: { row: BoardRow; rank: number; isPick: boolean; live?: LiveQuote }) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  const up = row.change_pct >= 0;
+  const price = live?.price ?? row.price;
+  const change = live?.change_pct ?? row.change_pct;
+  const up = change >= 0;
   return (
     <li>
       <button
@@ -106,8 +111,10 @@ function Row({ row, rank, isPick }: { row: BoardRow; rank: number; isPick: boole
           <span className="mt-1 block truncate text-[12px] text-muted">{row.name}</span>
         </span>
         <span className="shrink-0 text-right">
-          <span className="num block text-[13.5px] font-semibold text-fg">{rupees(row.price)}</span>
-          <span className={`num block text-[11.5px] ${up ? "text-bull" : "text-bear"}`}>{signedPct(row.change_pct)}</span>
+          <span className="num block text-[13.5px] font-semibold text-fg">
+            <Ticking value={price}>{rupees(price)}</Ticking>
+          </span>
+          <span className={`num block text-[11.5px] ${up ? "text-bull" : "text-bear"}`}>{signedPct(change)}</span>
         </span>
         <span className="w-[44px] shrink-0 text-right">
           <CheckDots row={row} />
@@ -121,14 +128,24 @@ function Row({ row, rank, isPick }: { row: BoardRow; rank: number; isPick: boole
       </button>
       {open ? (
         <div id={id}>
-          <Detail row={row} />
+          <Detail row={row} live={live} />
         </div>
       ) : null}
     </li>
   );
 }
 
-export function BoardSection({ board, scanned, pickSymbols }: { board: BoardRow[]; scanned: number; pickSymbols: Set<string> }) {
+export function BoardSection({
+  board,
+  scanned,
+  pickSymbols,
+  quotes,
+}: {
+  board: BoardRow[];
+  scanned: number;
+  pickSymbols: Set<string>;
+  quotes: Record<string, LiveQuote>;
+}) {
   const [showAll, setShowAll] = useState(false);
   if (board.length === 0) return null;
   const rows = showAll ? board : board.slice(0, INITIAL_ROWS);
@@ -155,7 +172,7 @@ export function BoardSection({ board, scanned, pickSymbols }: { board: BoardRow[
       </div>
       <ol className="mt-2 divide-y divide-line/70 overflow-hidden rounded-xl border border-line/70 bg-panel">
         {rows.map((r, i) => (
-          <Row key={r.symbol} row={r} rank={i + 1} isPick={pickSymbols.has(r.symbol)} />
+          <Row key={r.symbol} row={r} rank={i + 1} isPick={pickSymbols.has(r.symbol)} live={quotes[r.symbol]} />
         ))}
       </ol>
       {board.length > INITIAL_ROWS ? (

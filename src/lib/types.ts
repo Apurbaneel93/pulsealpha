@@ -238,3 +238,43 @@ export interface ServerConfig {
 export interface ApiError {
   error: string;
 }
+
+// ── Live prices and charts ──────────────────────────────────────────────────
+
+export type ChartRange = "1d" | "5d" | "1m" | "3m" | "6m" | "1y";
+
+/** Latest traded price for one symbol, refreshed every ~15 s on the server. */
+export interface LiveQuote {
+  price: number;
+  /** Official previous close, so the change matches what brokers show. */
+  prev_close: number;
+  change_pct: number;
+  day_high: number | null;
+  day_low: number | null;
+  /** When the exchange stamped the last trade (not when we fetched it). */
+  market_time_iso: string;
+  fetched_at_iso: string;
+}
+
+export interface QuotesResponse {
+  as_of_iso: string;
+  quotes: Record<string, LiveQuote>;
+  /** Symbols that could not be loaded this time; clients keep their last value. */
+  missing: string[];
+}
+
+export interface ChartPayload {
+  symbol: string;
+  range: ChartRange;
+  interval: "1m" | "5m" | "1d";
+  /** [epoch seconds, close] */
+  points: Array<[number, number]>;
+  /** Aligned with `points`; null while the average is still warming up. Daily ranges only. */
+  ema20: Array<number | null> | null;
+  ema50: Array<number | null> | null;
+  /** Official previous close; 1D only. */
+  previous_close: number | null;
+  /** Regular-session window of the day shown, epoch seconds; 1D only. */
+  session: { start: number; end: number } | null;
+  fetched_at_iso: string;
+}

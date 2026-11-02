@@ -87,6 +87,82 @@ function chartJson(symbol, nowMs) {
   };
 }
 
+// ── Intraday bars (1m / 5m) for the chart tests ─────────────────────────────
+const IST_MS = 19_800_000;
+const hashOf = (symbol) => [...symbol].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7);
+const istDay = (ms) => {
+  const d = new Date(ms + IST_MS);
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), dow: d.getUTCDay() };
+};
+const sessionStartOf = ({ y, m, d }) => Date.UTC(y, m, d, 9, 15) - IST_MS;
+
+/** Mon–Fri 09:15–15:30 IST sessions ending at `nowMs`; today's stops at the current minute while the market is open. */
+function intradayJson(symbol, nowMs, stepMin, spanDays) {
+  const sessions = [];
+  for (let back = 0; sessions.length < Math.min(spanDays, 8) && back < 20; back++) {
+    const day = istDay(nowMs - back * DAY);
+    if (day.dow === 0 || day.dow === 6) continue;
+    const start = sessionStartOf(day);
+    if (start <= nowMs) sessions.unshift(start);
+  }
+  const rand = rng(hashOf(symbol));
+  let price = 1000 + (Math.abs(hashOf(symbol)) % 500);
+  const ts = [], o = [], h = [], l = [], c = [], v = [];
+  for (const start of sessions) {
+    const end = Math.min(start + 375 * 60_000, nowMs);
+    for (let t = start; t < end; t += stepMin * 60_000) {
+      const open = price;
+      price *= 1 + (rand() - 0.5) * 0.0016 * Math.sqrt(stepMin);
+      ts.push(Math.floor(t / 1000)); o.push(open); c.push(price);
+      h.push(Math.max(open, price)); l.push(Math.min(open, price)); v.push(Math.round(5e3 * (0.5 + rand())));
+    }
+  }
+  const last = sessions[sessions.length - 1] ?? nowMs;
+  const period = (a, b) => ({ timezone: "IST", start: Math.floor(a / 1000), end: Math.floor(b / 1000), gmtoffset: 19800 });
+  return {
+    chart: {
+      result: [{
+        meta: {
+          currency: "INR", symbol, exchangeName: "NSI", fullExchangeName: "NSE",
+          instrumentType: symbol.startsWith("^") ? "INDEX" : "EQUITY", firstTradeDate: 820454400,
+          regularMarketTime: ts[ts.length - 1] ?? Math.floor(nowMs / 1000), hasPrePostMarketData: false,
+          gmtoffset: 19800, timezone: "IST", exchangeTimezoneName: "Asia/Kolkata",
+          regularMarketPrice: c[c.length - 1] ?? price, chartPreviousClose: c[0] ?? price, priceHint: 2,
+          currentTradingPeriod: { pre: period(last - 900_000, last), regular: period(last, last + 375 * 60_000), post: period(last + 375 * 60_000, last + 420 * 60_000) },
+          dataGranularity: `${stepMin}m`, range: "", validRanges: ["1d", "5d", "1mo", "3mo", "6mo", "1y"],
+        },
+        timestamp: ts,
+        indicators: { quote: [{ open: o, high: h, low: l, close: c, volume: v }], adjclose: [{ adjclose: c }] },
+      }],
+      error: null,
+    },
+  };
+}
+
+/**
+ * Daily history for the quote path (a 14-day window) while the real NSE
+ * session is open: append a forming bar for today and move its price a little
+ * with the clock, so successive quotes differ.
+ */
+function withFormingBar(json, nowMs) {
+  const today = istDay(nowMs);
+  const start = sessionStartOf(today);
+  if (today.dow === 0 || today.dow === 6 || nowMs < start || nowMs >= start + 375 * 60_000) return json;
+  const r = json.chart.result[0];
+  const q = r.indicators.quote[0];
+  const prevClose = q.close[q.close.length - 1];
+  const price = prevClose * (1 + 0.006 + 0.004 * Math.sin(nowMs / 45_000));
+  r.timestamp.push(Math.floor(start / 1000));
+  q.open.push(prevClose); q.high.push(Math.max(prevClose, price) * 1.001); q.low.push(Math.min(prevClose, price) * 0.999);
+  q.close.push(price); q.volume.push(400_000);
+  r.indicators.adjclose[0].adjclose.push(price);
+  const per = (a, b) => ({ timezone: "IST", start: Math.floor(a / 1000), end: Math.floor(b / 1000), gmtoffset: 19800 });
+  r.meta.currentTradingPeriod.regular = per(start, start + 375 * 60_000);
+  r.meta.regularMarketPrice = price;
+  r.meta.regularMarketTime = Math.floor(nowMs / 1000) - 20;
+  return json;
+}
+
 function rss(symbol, nowMs) {
   const fresh = new Date(nowMs - 3 * 3_600_000).toUTCString();
   const stale = new Date(nowMs - 3 * DAY).toUTCString();
@@ -123,7 +199,24 @@ export function installMockUpstream({ now } = {}) {
     const chart = url.match(/\/v8\/finance\/chart\/([^?]+)/);
     if (chart) {
       count("yahoo");
-      return json(chartJson(decodeURIComponent(chart[1]), nowMs));
+      const symbol = decodeURIComponent(chart[1]);
+      const q = new URL(url).searchParams;
+      const interval = q.get("interval") ?? "1d";
+      const p1 = Number(q.get("period1")) * 1000;
+      const spanDays = p1 ? (nowMs - p1) / DAY : 200;
+      if (interval === "1m" || interval === "5m") return json(intradayJson(symbol, nowMs, interval === "1m" ? 1 : 5, Math.ceil(spanDays)));
+      const daily = chartJson(symbol, nowMs);
+      // Short daily windows are the live-quote path; the 200-day scan window is left untouched.
+      if (spanDays <= 15) {
+        const r = daily.chart.result[0];
+        const keep = 8;
+        r.timestamp = r.timestamp.slice(-keep);
+        const qd = r.indicators.quote[0];
+        for (const k of Object.keys(qd)) qd[k] = qd[k].slice(-keep);
+        r.indicators.adjclose[0].adjclose = r.indicators.adjclose[0].adjclose.slice(-keep);
+        return json(withFormingBar(daily, nowMs));
+      }
+      return json(daily);
     }
     if (url.includes("getcrumb")) return new Response("mockcrumb", { status: 200 });
     if (host.includes("yahoo")) return new Response("", { status: 200, headers: { "set-cookie": "A3=d=mock; Domain=.yahoo.com; Path=/" } });

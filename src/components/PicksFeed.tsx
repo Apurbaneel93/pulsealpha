@@ -1,12 +1,14 @@
 "use client";
 
 import { CircleAlert, Clock, FlaskConical, RefreshCw, SearchX } from "lucide-react";
+import { LiveBadge } from "./LivePrice";
 import { BoardSection } from "./BoardSection";
 import { HowItWorks } from "./HowItWorks";
 import { PickCard } from "./PickCard";
 import { signedPct } from "@/lib/format";
 import { formatDayHeading, istDateKey, isNseSessionOpen } from "@/lib/time";
-import type { ScanResult } from "@/lib/types";
+import { quoteLagSeconds } from "@/lib/live-pure";
+import type { LiveQuote, ScanResult } from "@/lib/types";
 
 interface Props {
   scan: ScanResult | null;
@@ -15,6 +17,8 @@ interface Props {
   onScan: () => void;
   /** Owner sign-in is configured and this visitor isn't signed in: show the quiet footer link. */
   showOwnerLink: boolean;
+  /** Live prices by symbol (picks, top of the ranking, ^NSEI). Empty when closed or simulated. */
+  quotes: Record<string, LiveQuote>;
 }
 
 function SkeletonCard() {
@@ -34,17 +38,19 @@ function SkeletonCard() {
   );
 }
 
-function IndexStrip({ scan }: { scan: ScanResult }) {
+function IndexStrip({ scan, quotes }: { scan: ScanResult; quotes: Record<string, LiveQuote> }) {
   return (
     <dl className="mt-4 grid grid-cols-3 gap-2">
-      {scan.market.indices.map((i) => (
-        <div key={i.symbol} className="min-w-0 rounded-xl border border-line/70 px-3 py-2">
-          <dt className="truncate text-[11px] text-muted">{i.label}</dt>
-          <dd className={`num mt-0.5 text-[15px] font-semibold ${i.changePct >= 0 ? "text-bull" : "text-bear"}`}>
-            {signedPct(i.changePct)}
-          </dd>
-        </div>
-      ))}
+      {scan.market.indices.map((i) => {
+        const live = quotes[i.symbol];
+        const pct = live?.change_pct ?? i.changePct;
+        return (
+          <div key={i.symbol} className="min-w-0 rounded-xl border border-line/70 px-3 py-2">
+            <dt className="truncate text-[11px] text-muted">{i.label}</dt>
+            <dd className={`num mt-0.5 text-[15px] font-semibold ${pct >= 0 ? "text-bull" : "text-bear"}`}>{signedPct(pct)}</dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
@@ -56,7 +62,7 @@ function sessionNote(scan: ScanResult, now = new Date()): string {
   const sessionIsToday = istDateKey(session) === istDateKey(now);
   if (isNseSessionOpen(now)) {
     return sessionIsToday
-      ? "NSE is open. Prices are live and can lag the exchange by a few minutes."
+      ? "NSE is open."
       : `No trading data for today yet (holiday or delayed feed). Showing the ${formatDayHeading(session)} session.`;
   }
   return `NSE is closed. Showing the ${formatDayHeading(session)} session.`;
@@ -70,10 +76,11 @@ function engineLabel(scan: ScanResult): string {
   return "Ranked by the rules engine";
 }
 
-export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink }: Props) {
+export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink, quotes }: Props) {
   const showSkeleton = scanning && !scan;
   const isDemo = scan?.mode === "demo";
   const isSimulated = scan?.simulated === true;
+  const niftyLive = quotes["^NSEI"];
 
   return (
     <section className="px-4 pt-5" aria-busy={scanning}>
@@ -92,13 +99,26 @@ export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink }: Prop
       )}
 
       {scan && !isDemo ? (
-        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted">
-          <Clock size={13} className="shrink-0" aria-hidden />
-          {sessionNote(scan)}
+        <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-snug text-muted">
+          <Clock size={13} className="mt-0.5 shrink-0" aria-hidden />
+          <span>
+            {sessionNote(scan)}
+            {isNseSessionOpen(new Date())
+              ? Object.keys(quotes).length > 0
+                ? " Prices update about every 20 seconds from Yahoo Finance."
+                : " Prices come from Yahoo Finance and can trail the exchange."
+              : ""}
+          </span>
+        </p>
+      ) : null}
+      {scan && !isDemo && niftyLive && isNseSessionOpen(new Date()) && quoteLagSeconds(niftyLive, new Date()) > 300 ? (
+        <p className="mt-1.5 text-[12px] leading-snug text-caution">
+          Yahoo Finance is about {Math.round(quoteLagSeconds(niftyLive, new Date()) / 60)} minutes behind the exchange right
+          now, so prices here trail Groww or your broker by that much.
         </p>
       ) : null}
 
-      {scan ? <IndexStrip scan={scan} /> : null}
+      {scan ? <IndexStrip scan={scan} quotes={quotes} /> : null}
 
       {isDemo || isSimulated ? (
         <div className="mt-4 flex gap-2.5 rounded-xl border border-caution/30 bg-caution/10 px-3.5 py-3 text-[13px] leading-snug">
@@ -139,7 +159,7 @@ export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink }: Prop
         ) : null}
 
         {scan && scan.picks.length > 0
-          ? scan.picks.map((p, i) => <PickCard key={`${scan.id}-${p.symbol}`} pick={p} engine={scan.engine} index={i} />)
+          ? scan.picks.map((p, i) => <PickCard key={`${scan.id}-${p.symbol}`} pick={p} engine={scan.engine} index={i} live={quotes[p.symbol]} />)
           : null}
 
         {scan && scan.picks.length === 0 && !scanning ? (
@@ -167,6 +187,7 @@ export function PicksFeed({ scan, scanning, error, onScan, showOwnerLink }: Prop
           board={scan.board}
           scanned={scan.board_scanned ?? scan.universe_size}
           pickSymbols={new Set(scan.picks.map((p) => p.symbol))}
+          quotes={quotes}
         />
       ) : null}
 

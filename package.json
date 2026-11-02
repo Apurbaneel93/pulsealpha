@@ -13,7 +13,9 @@
     "test:cache": "node scripts/test-cache.mjs",
     "verify": "tsx --conditions=react-server scripts/verify/run.ts",
     "test:owner": "tsx --conditions=react-server scripts/test-owner.ts",
-    "test:access": "node scripts/test-access.mjs"
+    "test:access": "node scripts/test-access.mjs",
+    "test:chart": "tsx --conditions=react-server scripts/test-live-pure.ts",
+    "test:quotes": "node scripts/test-quotes.mjs"
   },
   "dependencies": {
     "@fontsource-variable/schibsted-grotesk": "^5.3.0",

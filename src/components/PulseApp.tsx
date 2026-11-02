@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav, type Tab } from "./BottomNav";
 import { Header } from "./Header";
 import { HistoryView } from "./HistoryView";
 import { PicksFeed } from "./PicksFeed";
 import { SetupView } from "./SetupView";
+import { useLiveQuotes } from "./useLiveQuotes";
 import {
   DEFAULT_SETTINGS,
   appendHistory,
@@ -42,6 +43,8 @@ export function PulseApp() {
   const ownerRef = useRef(false);
   const lastRunRef = useRef(0);
   const owner = config?.owner === true;
+  const staleRetries = useRef(0);
+  const runScanRef = useRef<(s: Settings) => Promise<void>>(async () => {});
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -51,6 +54,15 @@ export function PulseApp() {
     setScan(result);
     saveLastScan(result);
     setHistory(appendHistory(scanToHistory(result)));
+    // A "stale" answer means the server is refreshing in the background and the
+    // next call will be fresh, so look again in a few seconds instead of
+    // leaving minutes-old data on screen until the next 3-minute tick.
+    if (result.cache?.market === "stale" && staleRetries.current < 2) {
+      staleRetries.current++;
+      window.setTimeout(() => void runScanRef.current(settingsRef.current), 9_000);
+    } else if (result.cache?.market !== "stale") {
+      staleRetries.current = 0;
+    }
   }, []);
 
   /**
@@ -106,6 +118,29 @@ export function PulseApp() {
     },
     [adopt],
   );
+
+  useEffect(() => {
+    runScanRef.current = runScan;
+  }, [runScan]);
+
+  // Live prices for what is on screen: the picks, the top of the ranking and Nifty.
+  // Never for demo or simulated scans, whose prices aren't real.
+  const liveSymbols = useMemo(() => {
+    if (!scan || scan.mode !== "live" || scan.simulated) return [];
+    const set = new Set<string>(["^NSEI"]);
+    for (const p of scan.picks) set.add(p.symbol);
+    for (const r of (scan.board ?? []).slice(0, 12)) set.add(r.symbol);
+    return [...set];
+  }, [scan]);
+  const rawQuotes = useLiveQuotes(liveSymbols, liveSymbols.length > 0);
+  // Ignore a quote older than the scan it would sit beside, so a price never goes backwards in time.
+  const quotes = useMemo(() => {
+    if (!scan) return {};
+    const floor = Date.parse(scan.scanned_at_iso) - 60_000;
+    return Object.fromEntries(
+      Object.entries(rawQuotes).filter(([sym, q]) => liveSymbols.includes(sym) && Date.parse(q.fetched_at_iso) >= floor),
+    );
+  }, [rawQuotes, scan, liveSymbols]);
 
   // Boot: paint the last scan instantly, then find out whether this browser is
   // the signed-in owner and refresh. A live refresh is cheap — the server
@@ -213,6 +248,7 @@ export function PulseApp() {
             error={error}
             onScan={() => void runScan(settings)}
             showOwnerLink={config?.ownerEnabled === true && !owner}
+            quotes={quotes}
           />
         ) : tab === "history" ? (
           <HistoryView

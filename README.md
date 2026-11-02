@@ -57,6 +57,17 @@ Every card's "detected at" time is when its market data was fetched, so everyone
 
 Why `unstable_cache` and not `'use cache'`: Next 16 recommends `'use cache'` with Cache Components, but its default store is in-memory per instance, which on serverless rarely survives between requests. `'use cache: remote'` fixes that but requires migrating the app to Cache Components. `unstable_cache` goes through Next's server cache handler, which Vercel backs with a shared, persistent cache today, with no config.
 
+## Live prices and charts
+
+The scan decides *which* stocks qualify and is cached for 3 minutes. Prices are a separate, faster feed so the screen moves while the market is open:
+
+- Every pick, the top 12 of the ranking and Nifty poll `/api/quotes` about every 20 seconds while NSE is open and the page is visible. Prices flash green or red on each tick, and a badge shows the exchange timestamp of the last trade ("Live · 11:31:05 AM"), so you always see how fresh a price really is.
+- The server keeps one quote per symbol for 15 seconds (`unstable_cache`), so any number of viewers cost Yahoo about one request per symbol per window.
+- Each pick shows where the live price sits against its plan: *In buy zone*, *x% above buy zone*, *Target reached* or *Below stop-loss*. The buy zone, target and stop-loss themselves stay as computed at detection.
+- Each pick and each expanded ranking row has a real chart: 1D (1-minute bars on a fixed 09:15–15:30 IST axis, with the previous close), 5D, 1M, 3M, 6M and 1Y (daily, with 20- and 50-day averages), the buy zone, target and stop-loss, and a touch crosshair.
+- If the scan comes back "stale" (the server is refreshing behind it), the app looks again after 9 seconds instead of leaving old data on screen.
+- Prices come from Yahoo Finance's public feed, which is not the exchange's licensed tick feed that brokers like Groww stream. Expect seconds to a few minutes of lag, never a tick-by-tick display. The exchange timestamp on each quote tells you exactly how much.
+
 ## Signal History
 
 Stored only in the browser (`localStorage`, up to 300 rows). Each stock is logged once per IST day, at its first detection, so repeated scans don't flood the log. Demo and simulated rows are tagged and kept separate from live ones. Clearing site data or switching phones starts a fresh log.
@@ -92,6 +103,8 @@ Stored only in the browser (`localStorage`, up to 300 rows). Each stock is logge
 
 | Route | Purpose |
 |---|---|
+| `GET /api/quotes?symbols=LT,INFY,^NSEI` | Public. Latest price, official previous close and exchange timestamp for up to 30 watchlist symbols, from a 15 s server cache. |
+| `GET /api/chart?symbol=LT&range=1d` | Public. Price history: `1d` (1-minute bars), `5d` (5-minute), `1m` `3m` `6m` `1y` (daily, with EMA 20/50). Whitelisted symbols and ranges only. |
 | `GET /api/scan` | The shared live scan (server key or rules engine), from cache when warm. Also the cron target. |
 | `POST /api/scan` | **Owner only.** Body `{ mode?: "live" \| "demo", model?: string }`, optional header `x-gemini-key`. |
 | `GET /api/verify` | **Owner only.** Accuracy report: filter funnel, raw sessions for cross-checking, ~9-month replay vs baseline. Cached per IST day. |
@@ -135,6 +148,9 @@ npm run test:live    # full live pipeline with Yahoo, Google News and Gemini moc
 npm run build && npm run test:cache
                      # real `next start` + mocked upstream: counts upstream calls across requests and a restart
 CACHE_TEST_REVALIDATE=1 npm run test:cache   # also waits out the 180 s window (~3 min)
+npm run test:chart   # live price and chart logic: IST sessions, payloads, EMA alignment, quote maths, buy-zone status
+npm run build && npm run test:quotes
+                     # real `next start`: /api/quotes and /api/chart validation, shapes, cache behaviour, refresh after 15 s
 npm run test:owner   # owner-mode primitives: tokens, expiry, forgery, passcode rotation, CSRF guard, lockout
 npm run build && npm run test:access
                      # real `next start`: visitor vs owner vs forged cookies on every route, headers, brute force

@@ -78,3 +78,26 @@ export function isNseSessionOpen(date: Date): boolean {
   const { minutes, weekday } = istClock(date);
   return weekday >= 1 && weekday <= 5 && minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 30;
 }
+
+/** Chart axis label for intraday charts: "11:30 AM". */
+export function formatAxisTime(date: Date): string {
+  const p = parts(date, { hour: "numeric", minute: "2-digit", hour12: true });
+  return `${p.hour}:${p.minute} ${(p.dayPeriod ?? "").toUpperCase()}`;
+}
+
+/** Chart axis label for multi-day charts: "28 Oct". */
+export function formatAxisDate(date: Date): string {
+  const { day, month } = dayMonth(date);
+  return `${Number(day)} ${month}`;
+}
+
+/** Chart axis label for year-long charts: "Oct 26". */
+export function formatAxisMonth(date: Date): string {
+  const p = parts(date, { month: "short", year: "2-digit" });
+  return `${p.month} ${p.year}`;
+}
+
+/** "11:31:05 AM" — for "as of" stamps on live prices. */
+export function formatClockSeconds(date: Date): string {
+  return clock(date, true);
+}

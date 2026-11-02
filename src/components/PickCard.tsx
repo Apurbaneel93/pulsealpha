@@ -2,16 +2,27 @@
 
 import { useId, useState } from "react";
 import { Activity, ChevronDown, Clock, ExternalLink, Globe, Newspaper, Zap } from "lucide-react";
-import { Sparkline } from "./Sparkline";
+import { LiveBadge, Ticking } from "./LivePrice";
+import { StockChart } from "./StockChart";
+import { planStatus } from "@/lib/live-pure";
 import { plain, rupees, signedPct } from "@/lib/format";
 import { formatBadge, formatClock } from "@/lib/time";
-import type { Engine, Pick } from "@/lib/types";
+import type { Engine, LiveQuote, Pick } from "@/lib/types";
 
 interface Props {
   pick: Pick;
   engine: Engine;
   index: number;
+  /** Latest price, refreshed every ~20 s while the market is open. */
+  live?: LiveQuote;
 }
+
+const STATUS_STYLE = {
+  bull: "border-bull/35 bg-bull/10 text-bull",
+  bear: "border-bear/35 bg-bear/10 text-bear",
+  caution: "border-caution/35 bg-caution/10 text-caution",
+  neutral: "border-line bg-ink/40 text-muted",
+} as const;
 
 function Level({
   label,
@@ -43,12 +54,15 @@ function Level({
   );
 }
 
-export function PickCard({ pick, engine, index }: Props) {
+export function PickCard({ pick, engine, index, live }: Props) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const detected = new Date(pick.detected_at_iso);
   const { levels, metrics } = pick;
-  const up = pick.day_change_pct >= 0;
+  const price = live?.price ?? pick.current_price;
+  const change = live?.change_pct ?? pick.day_change_pct;
+  const up = change >= 0;
+  const status = live ? planStatus(live.price, levels) : null;
 
   const bullets = [
     { icon: Globe, title: "Global & sector cues", body: pick.breakdown.global_cue },
@@ -86,16 +100,25 @@ export function PickCard({ pick, engine, index }: Props) {
           </time>
         </div>
 
-        {/* Price + trend */}
-        <div className="mt-3 flex items-end justify-between gap-3">
-          <p className="num text-[18px] font-semibold leading-none text-fg">
-            {rupees(pick.current_price)}{" "}
-            <span className={`text-[13px] font-medium ${up ? "text-bull" : "text-bear"}`}>
-              {signedPct(pick.day_change_pct)}
-            </span>
+        {/* Live price */}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+          <p className="num text-[22px] font-semibold leading-none text-fg">
+            <Ticking value={price}>{rupees(price)}</Ticking>{" "}
+            <span className={`text-[14px] font-medium ${up ? "text-bull" : "text-bear"}`}>{signedPct(change)}</span>
           </p>
-          <Sparkline values={pick.spark} className="h-[31px] w-24 shrink-0 overflow-visible" />
+          {live ? (
+            <LiveBadge quote={live} />
+          ) : (
+            <span className="num text-[11.5px] text-faint">Price at detection</span>
+          )}
         </div>
+        {status ? (
+          <p className={`mt-2 inline-flex items-center rounded-md border px-2 py-0.5 text-[12px] font-semibold ${STATUS_STYLE[status.tone]}`}>
+            {status.label}
+          </p>
+        ) : null}
+
+        <StockChart symbol={pick.symbol} levels={levels} live={live} />
       </div>
 
       {/* Trade plan: one segmented box so it reads as a single plan */}

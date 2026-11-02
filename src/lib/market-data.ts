@@ -56,6 +56,25 @@ export async function fetchDailyCandles(
   return { candles: toCandles(result), result };
 }
 
+/** Intraday bars for one Yahoo symbol: [epoch ms, close], oldest first, nulls dropped. */
+export async function fetchIntradayBars(
+  yahooSymbol: string,
+  interval: "1m" | "5m",
+  days: number,
+  now = new Date(),
+): Promise<Array<[number, number]>> {
+  const result = await yf.chart(yahooSymbol, {
+    period1: new Date(now.getTime() - days * 86_400_000),
+    interval,
+    return: "array",
+  });
+  const out: Array<[number, number]> = [];
+  for (const q of result.quotes) {
+    if (q.close != null && Number.isFinite(q.close)) out.push([q.date.getTime(), q.close]);
+  }
+  return out;
+}
+
 export async function fetchSeries(yahooSymbol: string, now = new Date()): Promise<Series> {
   const hit = cache.get(yahooSymbol);
   if (hit && now.getTime() - hit.at < CACHE_TTL_MS) return hit.value;
