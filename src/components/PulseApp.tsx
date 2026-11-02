@@ -233,14 +233,17 @@ export function PulseApp() {
   }, []);
 
   return (
-    <div className="relative mx-auto min-h-dvh w-full max-w-md bg-ink sm:border-x sm:border-line/60">
+    <div className="relative mx-auto min-h-dvh w-full max-w-md bg-ink sm:border-x sm:border-line/60 lg:max-w-none lg:border-x-0">
       <Header
         scanning={scanning}
         scannedAtIso={scan?.scanned_at_iso ?? null}
         regime={scan?.market.regime ?? null}
         onScan={() => void runScan(settings)}
+        tab={tab}
+        onTabChange={changeTab}
+        owner={owner}
       />
-      <main className="pb-[calc(5.5rem+env(safe-area-inset-bottom))]">
+      <main className="pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:mx-auto lg:max-w-[1320px] lg:px-8 lg:pb-16">
         {tab === "picks" ? (
           <PicksFeed
             scan={scan}

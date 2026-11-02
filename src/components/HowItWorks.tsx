@@ -10,9 +10,9 @@ const STEPS = [
   "Code sets the buy zone (price to +0.15 ATR), target (+2.5 ATR) and stop-loss (−1.5 ATR).",
 ];
 
-export function HowItWorks() {
+export function HowItWorks({ className = "mt-6" }: { className?: string }) {
   return (
-    <details className="group mt-6 rounded-xl border border-line/70 bg-panel/60">
+    <details className={`group rounded-xl border border-line/70 bg-panel/60 ${className}`}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3 text-[13.5px] font-semibold text-fg [&::-webkit-details-marker]:hidden">
         How these picks are made
         <ChevronDown size={16} className="shrink-0 text-faint transition-transform group-open:rotate-180" aria-hidden />

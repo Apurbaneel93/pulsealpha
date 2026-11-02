@@ -67,8 +67,8 @@ export function SetupView({ settings, config, onChange, onSignOut }: Props) {
       : "No key yet — picks are ranked by the rules engine until you add one.";
 
   return (
-    <section className="px-4 pt-5">
-      <h1 className="text-[21px] font-semibold leading-tight tracking-[-0.01em] text-fg">API Setup</h1>
+    <section className="px-4 pt-5 lg:mx-auto lg:max-w-3xl lg:px-0 lg:pt-8">
+      <h1 className="text-[21px] font-semibold leading-tight tracking-[-0.01em] text-fg lg:text-[28px]">API Setup</h1>
       <p className="mt-1 text-[13px] text-muted">Choose the data source and connect Gemini for AI evaluation.</p>
 
       <div className="mt-4 flex items-center gap-3 rounded-xl border border-bull/30 bg-bull/[0.07] px-3.5 py-3">
@@ -86,12 +86,12 @@ export function SetupView({ settings, config, onChange, onSignOut }: Props) {
         </button>
       </div>
 
-      <div className="mt-4 rounded-t-3xl rounded-b-2xl border border-line/80 bg-panel px-4 pb-5 pt-2.5">
-        <div className="mx-auto h-1 w-10 rounded-full bg-line" aria-hidden />
+      <div className="mt-4 rounded-t-3xl rounded-b-2xl border border-line/80 bg-panel px-4 pb-5 pt-2.5 lg:rounded-2xl lg:px-6 lg:pb-6 lg:pt-3">
+        <div className="mx-auto h-1 w-10 rounded-full bg-line lg:hidden" aria-hidden />
 
         <fieldset className="mt-4">
           <legend className="text-[14px] font-semibold text-fg">Data source</legend>
-          <div className="mt-2.5 space-y-2.5" role="radiogroup">
+          <div className="mt-2.5 space-y-2.5 lg:grid lg:grid-cols-2 lg:gap-3 lg:space-y-0" role="radiogroup">
             {MODES.map(({ id, title, body, icon: Icon }) => {
               const active = settings.mode === id;
               return (
@@ -146,7 +146,7 @@ export function SetupView({ settings, config, onChange, onSignOut }: Props) {
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent px-3.5 py-3 font-mono text-[14px] text-fg outline-none"
+              className="min-w-0 flex-1 bg-transparent px-3.5 py-3 font-mono text-[16px] text-fg outline-none lg:text-[14px]"
             />
             <button
               type="button"
@@ -169,7 +169,7 @@ export function SetupView({ settings, config, onChange, onSignOut }: Props) {
             autoComplete="off"
             autoCapitalize="off"
             spellCheck={false}
-            className="mt-1.5 w-full rounded-xl border border-line bg-ink/60 px-3.5 py-2.5 text-[14px] text-fg outline-none focus:border-bull/60"
+            className="mt-1.5 w-full rounded-xl border border-line bg-ink/60 px-3.5 py-2.5 text-[16px] text-fg outline-none focus:border-bull/60 lg:text-[14px]"
           />
           <p className="mt-1 text-[12px] text-faint">Leave blank for {defaultModel}.</p>
 

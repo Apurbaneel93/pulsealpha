@@ -1,6 +1,6 @@
 # PulseAlpha
 
-A mobile-first PWA that surfaces 2–3 bullish NSE setups a day, each stamped with the exact IST time it was detected, a one-line catalyst, and ATR-based buy zone, target and stop-loss.
+A mobile-first PWA (with a full desktop layout) that surfaces 2–3 bullish NSE setups a day, each stamped with the exact IST time it was detected, a one-line catalyst, and ATR-based buy zone, target and stop-loss.
 
 Next.js 16 (App Router) · TypeScript (strict + `noUncheckedIndexedAccess`) · Tailwind CSS 4 · Lucide · `yahoo-finance2` v4 · `@google/genai`
 
@@ -67,6 +67,14 @@ The scan decides *which* stocks qualify and is cached for 3 minutes. Prices are 
 - Each pick and each expanded ranking row has a real chart: 1D (1-minute bars on a fixed 09:15–15:30 IST axis, with the previous close), 5D, 1M, 3M, 6M and 1Y (daily, with 20- and 50-day averages), the buy zone, target and stop-loss, and a touch crosshair.
 - If the scan comes back "stale" (the server is refreshing behind it), the app looks again after 9 seconds instead of leaving old data on screen.
 - Prices come from Yahoo Finance's public feed, which is not the exchange's licensed tick feed that brokers like Groww stream. Expect seconds to a few minutes of lag, never a tick-by-tick display. The exchange timestamp on each quote tells you exactly how much.
+
+## Layouts
+
+- **Phone and tablet (under 1024 px):** one column with a bottom tab bar, exactly as designed for a phone.
+- **Desktop (1024 px and up):** tabs move into the header, the picks sit beside a sticky sidebar (index moves, a Nifty 50 chart, and quick links to each pick), and the ranking becomes a sortable, filterable table whose rows open a chart.
+- **Wide desktop (1280 px and up):** each pick card shows its chart and trade plan beside the research breakdown, which stays open.
+
+Pinch-zoom is allowed (the old zoom lock was an accessibility problem). Text inputs are 16 px on touch devices so iOS doesn't auto-zoom them.
 
 ## Signal History
 

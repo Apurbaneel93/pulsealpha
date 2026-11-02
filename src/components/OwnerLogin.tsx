@@ -68,7 +68,7 @@ export function OwnerLogin() {
             spellCheck={false}
             required
             maxLength={256}
-            className="min-w-0 flex-1 bg-transparent px-3 py-3 text-[15px] text-fg outline-none"
+            className="min-w-0 flex-1 bg-transparent px-3 py-3 text-[16px] text-fg outline-none"
           />
         </div>
         <button

@@ -27,16 +27,16 @@ export function HistoryView({ entries, onClear, onGoToPicks }: Props) {
   }, [entries]);
 
   return (
-    <section className="px-4 pt-5">
-      <h1 className="text-[21px] font-semibold leading-tight tracking-[-0.01em] text-fg">Signal History</h1>
-      <p className="mt-1 text-[13px] leading-snug text-muted">
+    <section className="px-4 pt-5 lg:px-0 lg:pt-8">
+      <h1 className="text-[21px] font-semibold leading-tight tracking-[-0.01em] text-fg lg:text-[28px]">Signal History</h1>
+      <p className="mt-1 text-[13px] leading-snug text-muted lg:text-[14px]">
         {entries.length === 0
           ? "Every pick is logged here with its detection time and entry price."
           : `${entries.length} signal${entries.length === 1 ? "" : "s"} saved on this device. Each stock is logged once per day, at its first detection.`}
       </p>
 
       {entries.length === 0 ? (
-        <div className="mt-6 rounded-2xl border border-dashed border-line px-5 py-10 text-center">
+        <div className="mt-6 rounded-2xl border border-dashed border-line px-5 py-10 text-center lg:mx-auto lg:max-w-xl lg:py-16">
           <History size={28} className="mx-auto text-faint" aria-hidden />
           <p className="mt-3 text-[15px] font-semibold text-fg">No signals logged yet</p>
           <p className="mx-auto mt-1.5 max-w-[28ch] text-[13px] leading-snug text-muted">
@@ -52,6 +52,7 @@ export function HistoryView({ entries, onClear, onGoToPicks }: Props) {
         </div>
       ) : (
         <>
+          <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-8">
           {groups.map(([day, list]) => (
             <div key={day} className="mt-5">
               <h2 className="mb-2 text-[12.5px] font-semibold text-muted">
@@ -86,6 +87,7 @@ export function HistoryView({ entries, onClear, onGoToPicks }: Props) {
               </ul>
             </div>
           ))}
+          </div>
 
           <button
               type="button"

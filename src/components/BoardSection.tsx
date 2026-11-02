@@ -3,18 +3,14 @@
 import { useId, useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { computeLevels } from "@/lib/levels";
+import { BoardTable, CHECK_LABELS } from "./BoardTable";
 import { Ticking } from "./LivePrice";
 import { StockChart } from "./StockChart";
+import { useIsDesktop } from "./useIsDesktop";
 import { plain, rupees, signedPct } from "@/lib/format";
 import type { BoardRow, LiveQuote } from "@/lib/types";
 
 const INITIAL_ROWS = 12;
-
-const CHECK_LABELS = {
-  trend: "Above 20-day average",
-  rsi: "RSI between 55 and 72",
-  volume: "Volume above 1.5x average",
-} as const;
 
 function CheckDots({ row }: { row: BoardRow }) {
   const order = ["trend", "rsi", "volume"] as const;
@@ -147,23 +143,28 @@ export function BoardSection({
   quotes: Record<string, LiveQuote>;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const desktop = useIsDesktop();
   if (board.length === 0) return null;
   const rows = showAll ? board : board.slice(0, INITIAL_ROWS);
   const full = board.filter((r) => r.passed === 3).length;
   return (
-    <section className="mt-8" aria-labelledby="board-title">
+    <section className="mt-8 lg:mt-12" aria-labelledby="board-title">
       <div className="flex items-baseline justify-between gap-3">
-        <h2 id="board-title" className="text-[17px] font-semibold tracking-[-0.01em] text-fg">
+        <h2 id="board-title" className="text-[17px] font-semibold tracking-[-0.01em] text-fg lg:text-[21px]">
           Bullish ranking
         </h2>
         <span className="num shrink-0 text-[12px] text-muted">
           {board.length} of {scanned} stocks
         </span>
       </div>
-      <p className="mt-1 text-[12.5px] leading-snug text-muted">
+      <p className="mt-1 text-[12.5px] leading-snug text-muted lg:text-[13px]">
         Every stock above its 20-day average, ranked by setup checks passed, then bullish score.{" "}
-        {full} pass all three. Tap a stock for details.
+        {full} pass all three. {desktop ? "Click a heading to sort, or a row for its chart." : "Tap a stock for details."}
       </p>
+      {desktop ? (
+        <BoardTable board={board} pickSymbols={pickSymbols} quotes={quotes} />
+      ) : (
+      <>
       <div className="mt-2 flex items-center justify-end gap-3 text-[11px] text-faint" aria-hidden>
         <span className="flex items-center gap-1">
           <span className="size-[7px] rounded-full bg-bull" /> Check passed
@@ -184,6 +185,8 @@ export function BoardSection({
           {showAll ? "Show fewer" : `Show all ${board.length}`}
         </button>
       ) : null}
+      </>
+      )}
     </section>
   );
 }
