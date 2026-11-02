@@ -183,6 +183,11 @@ export interface MarketSnapshot {
   market: MarketCues;
   universe_size: number;
   failed_symbols: number;
+  /**
+   * Stocks whose latest traded session was missing from the candles Yahoo
+   * returned (their indicators are one session old). Absent in demo data.
+   */
+  stale_symbols?: number;
   /** How many stocks cleared the hard filter (shortlist may be capped below this). */
   passed_count: number;
   /** Filter survivors, pre-ranked by the rules engine, capped for news + AI. */

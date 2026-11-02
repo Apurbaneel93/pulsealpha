@@ -16,7 +16,7 @@ const cachedReport = unstable_cache(
     void istDay;
     return buildVerifyReport(new Date());
   },
-  ["pulsealpha:verify:v1"],
+  ["pulsealpha:verify:v2"],
   { revalidate: 6 * 3600, tags: ["pulsealpha:verify"] },
 );
 

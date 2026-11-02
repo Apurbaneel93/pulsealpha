@@ -5,6 +5,7 @@ import { mapSettled, errorMessage, isRateLimitError } from "./async";
 import {
   INDEX_DEFS,
   LOOKBACK_DAYS,
+  candlesFromBars,
   classifyRegime,
   indexCueFromSeries,
   seriesFromCandles,
@@ -25,24 +26,15 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 const cache = new Map<string, { at: number; value: Series }>();
 
-function toCandles(result: ChartResultArray): Candle[] {
-  const out: Candle[] = [];
-  for (const q of result.quotes) {
-    if (q.open == null || q.high == null || q.low == null || q.close == null) continue;
-    if (![q.open, q.high, q.low, q.close].every(Number.isFinite)) continue;
-    out.push({
-      date: q.date.toISOString(),
-      open: q.open,
-      high: q.high,
-      low: q.low,
-      close: q.close,
-      volume: q.volume ?? 0,
-    });
-  }
-  return out;
+function toCandles(result: ChartResultArray, now: Date): Candle[] {
+  return candlesFromBars(
+    result.quotes,
+    { price: result.meta.regularMarketPrice, time: result.meta.regularMarketTime },
+    now,
+  );
 }
 
-/** Daily candles for one Yahoo symbol over the last `days` calendar days (nulls dropped). */
+/** Daily candles for one Yahoo symbol over the last `days` calendar days (nulls dropped; a missing close on the newest bar is filled from the last trade). */
 export async function fetchDailyCandles(
   yahooSymbol: string,
   days: number,
@@ -53,7 +45,7 @@ export async function fetchDailyCandles(
     interval: "1d",
     return: "array",
   });
-  return { candles: toCandles(result), result };
+  return { candles: toCandles(result, now), result };
 }
 
 /** Intraday bars for one Yahoo symbol: [epoch ms, close], oldest first, nulls dropped. */
@@ -81,7 +73,13 @@ export async function fetchSeries(yahooSymbol: string, now = new Date()): Promis
 
   const { candles, result } = await fetchDailyCandles(yahooSymbol, LOOKBACK_DAYS, now);
   if (candles.length < 60) throw new Error(`${yahooSymbol}: only ${candles.length} sessions returned`);
-  const value = seriesFromCandles(candles, result.meta.currentTradingPeriod?.regular, result.meta.regularMarketPrice, now);
+  const value = seriesFromCandles(
+    candles,
+    result.meta.currentTradingPeriod?.regular,
+    result.meta.regularMarketPrice,
+    now,
+    result.meta.regularMarketTime,
+  );
   cache.set(yahooSymbol, { at: now.getTime(), value });
   return value;
 }
@@ -91,24 +89,29 @@ export interface UniverseScan {
   attempted: number;
   failed: number;
   rateLimited: boolean;
+  /** Stocks whose latest traded session is missing from the candles (data one session old). */
+  behind: number;
 }
 
 export async function scanUniverse(entries: readonly WatchlistEntry[], now = new Date()): Promise<UniverseScan> {
   const settled = await mapSettled(entries, 8, async (entry) => {
     const series = await fetchSeries(entry.yahoo, now);
-    return snapshotFromSeries(entry, series);
+    return { snap: snapshotFromSeries(entry, series), behind: series.behind === true };
   });
   const snapshots: TechnicalSnapshot[] = [];
   let failed = 0;
+  let behind = 0;
   let rateLimited = false;
   for (const r of settled) {
-    if (r.status === "fulfilled" && r.value) snapshots.push(r.value);
-    else {
+    if (r.status === "fulfilled" && r.value.snap) {
+      snapshots.push(r.value.snap);
+      if (r.value.behind) behind++;
+    } else {
       failed++;
       if (r.status === "rejected" && isRateLimitError(r.reason)) rateLimited = true;
     }
   }
-  return { snapshots, attempted: entries.length, failed, rateLimited };
+  return { snapshots, attempted: entries.length, failed, rateLimited, behind };
 }
 
 export async function fetchMarketCues(now = new Date()): Promise<MarketCues> {

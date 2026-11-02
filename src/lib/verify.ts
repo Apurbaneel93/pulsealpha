@@ -1,8 +1,9 @@
 import "server-only";
 import { mapSettled } from "./async";
 import { funnel, liveSnapshot, runBacktest, type BacktestReport, type FilterFunnel } from "./backtest";
+import { runExperiment, type ExperimentReport } from "./experiment";
 import { fetchDailyCandles } from "./market-data";
-import { formatDetectedAt } from "./time";
+import { formatDetectedAt, istDateKey } from "./time";
 import { WATCHLIST } from "./watchlist";
 import type { Candle, TechnicalSnapshot, WatchlistEntry } from "./types";
 
@@ -16,6 +17,8 @@ export interface VerifyReport {
   universe: number;
   loaded: number;
   failed: string[];
+  /** Is the data current? `behind` lists stocks Yahoo has traded since the newest candle we hold. */
+  freshness: { latest_session: string; behind: string[] };
   /** How many of today's watchlist stocks pass each check, and all six. */
   todayFunnel: FilterFunnel;
   /** Raw recent sessions + computed indicators, to cross-check against any charting site. */
@@ -33,15 +36,26 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 export async function buildVerifyReport(now = new Date()): Promise<VerifyReport> {
   const settled = await mapSettled(WATCHLIST, 6, async (entry: WatchlistEntry) => {
     const { candles, result } = await fetchDailyCandles(entry.yahoo, HISTORY_DAYS, now);
-    return { entry, candles, regular: result.meta.currentTradingPeriod?.regular, metaPrice: result.meta.regularMarketPrice };
+    return {
+      entry,
+      candles,
+      regular: result.meta.currentTradingPeriod?.regular,
+      metaPrice: result.meta.regularMarketPrice,
+      marketTime: result.meta.regularMarketTime,
+    };
   });
   const loaded: Array<{ entry: WatchlistEntry; candles: Candle[]; snapshot: TechnicalSnapshot | null }> = [];
   const failed: string[] = [];
+  const behind: string[] = [];
+  let latestSession = "";
   settled.forEach((r, i) => {
     const sym = WATCHLIST[i]?.symbol ?? "?";
     if (r.status === "rejected") return void failed.push(sym);
     if (r.value.candles.length < 80) return void failed.push(sym);
-    const { entry, candles, regular, metaPrice } = r.value;
+    const { entry, candles, regular, metaPrice, marketTime } = r.value;
+    const lastDate = candles[candles.length - 1]?.date.slice(0, 10) ?? "";
+    if (lastDate > latestSession) latestSession = lastDate;
+    if (lastDate && marketTime && istDateKey(marketTime) > lastDate) behind.push(entry.symbol);
     loaded.push({ entry, candles, snapshot: liveSnapshot(entry, candles, regular, metaPrice, now) });
   });
   if (loaded.length < WATCHLIST.length * 0.35) {
@@ -87,6 +101,7 @@ export async function buildVerifyReport(now = new Date()): Promise<VerifyReport>
     universe: WATCHLIST.length,
     loaded: loaded.length,
     failed,
+    freshness: { latest_session: latestSession, behind },
     todayFunnel: funnel(snapshots),
     dataCheck,
     backtest: runBacktest(loaded.map(({ entry, candles }) => ({ entry, candles }))),
@@ -102,4 +117,18 @@ export async function buildVerifyReport(now = new Date()): Promise<VerifyReport>
       "Today's watchlist is used for the whole period, which favours stocks that stayed in the Nifty 200 (survivorship bias).",
     ],
   };
+}
+
+/** Strategy diagnostics (see experiment.ts): forward returns by check and indicator bin, and stop/target variants. */
+export async function buildExperimentReport(now = new Date()): Promise<ExperimentReport> {
+  const settled = await mapSettled(WATCHLIST, 6, async (entry: WatchlistEntry) => {
+    const { candles } = await fetchDailyCandles(entry.yahoo, HISTORY_DAYS, now);
+    return { entry, candles };
+  });
+  const series: Array<{ entry: WatchlistEntry; candles: Candle[] }> = [];
+  for (const r of settled) if (r.status === "fulfilled" && r.value.candles.length >= 80) series.push(r.value);
+  if (series.length < WATCHLIST.length * 0.35) {
+    throw new Error(`Only ${series.length}/${WATCHLIST.length} symbols loaded from Yahoo Finance`);
+  }
+  return runExperiment(series);
 }

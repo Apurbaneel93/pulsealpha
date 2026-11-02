@@ -97,6 +97,7 @@ export async function loadLiveMarketData(now = new Date()): Promise<MarketSnapsh
     market: marketRes.m,
     universe_size: universe.attempted,
     failed_symbols: universe.failed,
+    stale_symbols: universe.behind,
     passed_count,
     shortlist,
     news,
@@ -161,6 +162,12 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps): Promise<ScanRe
       marketCache = live.cache;
       if (md.failed_symbols > 0) {
         notices.push(`${md.failed_symbols} of ${md.universe_size} symbols could not be loaded and were skipped.`);
+      }
+      const stale = md.stale_symbols ?? 0;
+      if (stale >= Math.max(3, md.universe_size * 0.05)) {
+        notices.push(
+          `${stale} of ${md.universe_size} stocks are missing their latest session from Yahoo Finance, so those readings are one session old. Rescan after the data settles.`,
+        );
       }
     } catch (err: unknown) {
       md = loadDemoMarketData(now);

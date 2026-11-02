@@ -4,6 +4,7 @@
  */
 import { atr, ema, pctChange, rsi, sma, volumeRatio } from "./indicators";
 import { openingGapAtr, round2 } from "./levels";
+import { istDateKey } from "./time";
 import type { Candle, IndexCue, MarketCues, Regime, TechnicalSnapshot, WatchlistEntry } from "./types";
 
 export interface Series {
@@ -13,6 +14,74 @@ export interface Series {
   last: number;
   /** True when the exchange session is open and the last bar was in-progress. */
   inProgress: boolean;
+  /**
+   * True when Yahoo shows a trade on a later day than the newest completed bar
+   * while the market is closed: the latest session is missing from `completed`,
+   * so every indicator is one session old.
+   */
+  behind?: boolean;
+}
+
+/** One raw daily bar as Yahoo returns it: any field can be null. */
+export interface RawBar {
+  date: Date;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+}
+
+/** Daily bars are stamped at the 09:15 IST open; the regular session ends 6h15m later. */
+const SESSION_MS = 6.25 * 3_600_000;
+/** The last trade must be at least this long after the open to count as the day's close (≥ 15:15 IST). */
+const LATE_TRADE_MS = 6 * 3_600_000;
+
+/**
+ * Yahoo can leave the newest daily bar's close null for hours after the bell
+ * (the bar has its open, high, low and volume, but no close). Dropping it
+ * would make every indicator a full session old, so the bar's close is taken
+ * from the last traded price when that price is trustworthy: same IST day,
+ * inside the bar's own high–low range, and (once the session is over) stamped
+ * in the closing minutes. While the session is open the bar is still forming
+ * and `seriesFromCandles` excludes it from indicators anyway.
+ */
+function closeFromLastTrade(bar: RawBar, low: number, high: number, price: number, time: Date | undefined): number | null {
+  if (!Number.isFinite(price) || price <= 0 || !time || !Number.isFinite(time.getTime())) return null;
+  if (istDateKey(time) !== istDateKey(bar.date)) return null;
+  if (price < low * 0.995 || price > high * 1.005) return null;
+  return price;
+}
+
+/**
+ * Clean raw bars into candles. Bars with a missing field are dropped, except
+ * the newest bar's missing close, which `closeFromLastTrade` may supply.
+ */
+export function candlesFromBars(
+  bars: readonly RawBar[],
+  meta: { price: number; time: Date | undefined },
+  now: Date,
+): Candle[] {
+  const out: Candle[] = [];
+  bars.forEach((q, idx) => {
+    let close = q.close;
+    if (close == null && idx === bars.length - 1 && q.open != null && q.high != null && q.low != null) {
+      const sessionOver = now.getTime() >= q.date.getTime() + SESSION_MS;
+      const late = meta.time !== undefined && meta.time.getTime() >= q.date.getTime() + LATE_TRADE_MS;
+      if (!sessionOver || late) close = closeFromLastTrade(q, q.low, q.high, meta.price, meta.time);
+    }
+    if (q.open == null || q.high == null || q.low == null || close == null) return;
+    if (![q.open, q.high, q.low, close].every(Number.isFinite)) return;
+    out.push({
+      date: q.date.toISOString(),
+      open: q.open,
+      high: q.high,
+      low: q.low,
+      close,
+      volume: q.volume ?? 0,
+    });
+  });
+  return out;
 }
 
 /** ~200 calendar days ≈ 135 sessions: enough for a well-converged 50-EMA. */
@@ -34,6 +103,8 @@ export function seriesFromCandles(
   regular: { start: Date; end: Date } | undefined,
   metaPrice: number,
   now: Date,
+  /** When the exchange stamped the last trade; lets the series notice a missing session. */
+  marketTime?: Date,
 ): Series {
   const lastBar = candles[candles.length - 1];
   const sessionOpen =
@@ -42,7 +113,14 @@ export function seriesFromCandles(
     sessionOpen && lastBar !== undefined && new Date(lastBar.date).getTime() >= regular.start.getTime() - 6 * 3_600_000;
   const completed = inProgress ? candles.slice(0, -1) : candles;
   const last = Number.isFinite(metaPrice) && metaPrice > 0 ? metaPrice : (lastBar?.close ?? 0);
-  return { completed, last, inProgress };
+  const lastDone = completed[completed.length - 1];
+  const behind =
+    !sessionOpen &&
+    lastDone !== undefined &&
+    marketTime !== undefined &&
+    Number.isFinite(marketTime.getTime()) &&
+    istDateKey(marketTime) > istDateKey(new Date(lastDone.date));
+  return { completed, last, inProgress, behind };
 }
 
 /** Last-session move of an index and whether it sits above its 20-EMA. */

@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/test-indicators.ts && tsx --conditions=react-server scripts/test-strategy.ts",
+    "test": "tsx scripts/test-indicators.ts && tsx scripts/test-session-close.ts && tsx --conditions=react-server scripts/test-experiment.ts && tsx --conditions=react-server scripts/test-strategy.ts",
     "test:live": "tsx --conditions=react-server scripts/test-live-path.ts",
     "test:cache": "node scripts/test-cache.mjs",
     "verify": "tsx --conditions=react-server scripts/verify/run.ts",
