@@ -16,7 +16,7 @@ const cachedExperiment = unstable_cache(
     void istDay;
     return buildExperimentReport(new Date());
   },
-  ["pulsealpha:experiment:v1"],
+  ["pulsealpha:experiment:v2"],
   { revalidate: 6 * 3600, tags: ["pulsealpha:experiment"] },
 );
 

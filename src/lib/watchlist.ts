@@ -11,7 +11,7 @@ const RAW: ReadonlyArray<readonly [symbol: string, name: string, sector: Sector]
   ["HCLTECH", "HCL Technologies", "IT"],
   ["WIPRO", "Wipro", "IT"],
   ["TECHM", "Tech Mahindra", "IT"],
-  ["LTIM", "LTIMindtree", "IT"],
+  ["LTM", "LTIMindtree", "IT"],
   ["PERSISTENT", "Persistent Systems", "IT"],
   ["COFORGE", "Coforge", "IT"],
   ["MPHASIS", "Mphasis", "IT"],

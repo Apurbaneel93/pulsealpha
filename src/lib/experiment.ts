@@ -242,6 +242,8 @@ export interface ExperimentReport {
   groups: GroupRow[];
   bins: Record<string, GroupRow[]>;
   variants: VariantRow[];
+  /** The current card's plan applied to subsets of the screen and to the screen with RVOL dropped. */
+  subsets: Array<{ name: string; all: PlanStats; train: PlanStats; test: PlanStats }>;
   notes: string[];
 }
 
@@ -251,6 +253,8 @@ export function runExperiment(series: ReadonlyArray<{ entry: WatchlistEntry; can
   // The first 60% of signal days train; the rest test.
   const split = dates[Math.floor(dates.length * 0.6)] ?? "9999-12-31";
   const screen = obs.filter((o) => o.passedAll);
+  const hot = (o: Obs) => computeLevels(o.snap.current_price, o.snap.prev_close, o.snap.atr14).gap_status === "WAIT_FOR_PULLBACK";
+  const othersPass = (o: Obs) => CHECK_KEYS.every((k) => k === "volume" || o.checks[k]);
 
   const groups: GroupRow[] = [
     groupRow("Every stock-day", obs, split),
@@ -258,6 +262,15 @@ export function runExperiment(series: ReadonlyArray<{ entry: WatchlistEntry; can
     groupRow("Passes 5 of 6", obs.filter((o) => o.passedCount === 5), split),
     groupRow("Passes 4 or fewer", obs.filter((o) => o.passedCount <= 4), split),
   ];
+  groups.push(
+    groupRow("Screen · closed ≤0.75 ATR up (card: ACTIVE_BUY_ZONE)", screen.filter((o) => !hot(o)), split),
+    groupRow("Screen · closed >0.75 ATR up (card: WAIT_FOR_PULLBACK)", screen.filter(hot), split),
+    groupRow("RVOL ≥1.5 · quiet day (≤0.75 ATR up)", obs.filter((o) => o.checks.volume && !hot(o)), split),
+    groupRow("RVOL ≥1.5 · hot day (>0.75 ATR up)", obs.filter((o) => o.checks.volume && hot(o)), split),
+    groupRow("RVOL <1.5 · hot day (>0.75 ATR up)", obs.filter((o) => !o.checks.volume && hot(o)), split),
+    groupRow("Other five checks pass, RVOL ignored", obs.filter(othersPass), split),
+    groupRow("Other five checks pass, RVOL ignored · quiet day", obs.filter((o) => othersPass(o) && !hot(o)), split),
+  );
   for (const k of CHECK_KEYS) {
     groups.push(groupRow(`Fails only "${k}"`, obs.filter((o) => o.passedCount === 5 && !o.checks[k]), split));
   }
@@ -284,6 +297,20 @@ export function runExperiment(series: ReadonlyArray<{ entry: WatchlistEntry; can
     return { name: v.name, screen: part(screen), everyDay: part(obs) };
   });
 
+  const current = VARIANTS[0] as Variant;
+  const subsetOf = (name: string, list: readonly Obs[]) => ({
+    name,
+    all: planStats(list, current, horizon),
+    train: planStats(list.filter((o) => o.date < split), current, horizon),
+    test: planStats(list.filter((o) => o.date >= split), current, horizon),
+  });
+  const subsets = [
+    subsetOf("Screen · ACTIVE_BUY_ZONE", screen.filter((o) => !hot(o))),
+    subsetOf("Screen · WAIT_FOR_PULLBACK", screen.filter(hot)),
+    subsetOf("RVOL ignored · quiet day", obs.filter((o) => othersPass(o) && !hot(o))),
+    subsetOf("RVOL ignored · hot day", obs.filter((o) => othersPass(o) && hot(o))),
+  ];
+
   return {
     period: { from: dates[0] ?? "", to: dates[dates.length - 1] ?? "", split },
     stockDays: obs.length,
@@ -292,6 +319,7 @@ export function runExperiment(series: ReadonlyArray<{ entry: WatchlistEntry; can
     groups,
     bins,
     variants,
+    subsets,
     notes: [
       "Excess = a stock's return from the next open to the close h sessions later, minus the average of all stocks for the same signal day. It strips out market direction.",
       "Train = signal days before the split date, test = from the split date on. Trust only what holds in both.",
