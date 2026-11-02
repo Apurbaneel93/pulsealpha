@@ -130,6 +130,7 @@ All levels are rounded to the ₹0.05 tick. Each card shows the Gap Guard status
 | `GET /api/scan` | The shared live scan (server key or rules engine), from cache when warm. Also the cron target. |
 | `POST /api/scan` | **Owner only.** Body `{ mode?: "live" \| "demo", model?: string }`, optional header `x-gemini-key`. |
 | `GET /api/verify` | **Owner only.** Accuracy report: filter funnel, raw sessions for cross-checking, ~9-month replay vs baseline. Cached per IST day. |
+| `GET /api/verify/experiment` | **Owner only.** Strategy diagnostics: forward returns (vs the same-day average stock) for the screen, each check and indicator bin, and stop/target variants, all split into train and test periods. Cached per IST day. |
 | `GET /api/config` | Capability flags only (never secrets). Server-key status is shown to the owner alone. |
 | `POST /api/verify-key` | **Owner only.** One-word Gemini round-trip for the "Test key" button. |
 | `GET` / `POST` / `DELETE /api/owner` | Session status / sign in with `{ passcode }` / sign out. |
@@ -162,11 +163,23 @@ GEMINI_API_KEY=... npm run verify     # ranked by Gemini, as on Vercel
 
 How to read it: a winner books 60% at +1.15 ATR and the rest at breakeven or +2.00 ATR, and a loser costs 0.90 ATR, so if no runner ever reached Target 2 the plan would need Target 1 to be hit about 56.6% of the time to break even. Target 2 hits pull that down. **Average return per trade** and **profit factor** (> 1 means profitable) are the honest headline numbers, and they should beat the baseline, or the screen isn't adding anything. Daily bars hide the order of events inside a session, so the replay assumes the stop hits before Target 1 in the same session, applies the breakeven stop from the session after Target 1, and cannot replay the 15-minute 9-EMA trail. Costs aren't deducted; allow ~0.25% per round trip. The new screen has not been validated on real data in this repo: run it before trading on it.
 
+### What the Jan–Oct 2026 history says (run on 3 Nov 2026, 93 liquid NSE stocks)
+
+Found with `/api/verify` and `/api/verify/experiment`. Re-run them before relying on any of it; markets change.
+
+- **No edge detected in the daily-bar screen.** Stocks passing all six checks (125 signals on 78 days) returned about the same as the average stock over the next 1–10 sessions (5-session excess −0.30%, t = −0.5; positive in the later period, negative in the earlier one). The plan lost money before costs (profit factor 0.84; the no-filter baseline 0.79) because the whole universe fell over the period; the card's levels are close to neutral on driftless synthetic prices (profit factor ≈ 1.1), so the structure itself is not the problem.
+- **No stop or target arrangement fixes this.** Stops from 0.9 to 2.0 ATR, Target 1 from 1.0 to 1.5 ATR and a buy-the-open entry all stayed below profit factor 1 over the full period, on the screen and on every stock-day. Tuning them on ~100 trades would only fit noise.
+- **RVOL ≥ 1.5 is the bottleneck and does not help.** Only about 15% of stock-days pass it, and stock-days with RVOL ≥ 1.5 had slightly *negative* 5-session excess (−0.10%, both periods). Low-volume days were slightly positive (+0.11%, t = 2.6, both periods).
+- **Chasing a hot day loses; the Gap Guard is right.** A stock that closed more than 0.75 ATR above its previous close lagged by 0.25–0.33% over the next 3–5 sessions (t = −2.9, both periods). That held for both high- and low-volume days.
+- **Small positives, all below costs:** a compact prior-day range (coil < 0.9) and a quiet day each add about +0.05 to +0.10% over five sessions. Round-trip costs are about 0.25%.
+- **Not testable here:** the catalyst layer (post-market news, order wins, earnings). There are no historical headlines, so the part of the strategy most likely to carry an edge is untested. Paper-trade it before risking money.
+- Fixed on the way: Yahoo can return the newest daily bar with `close = null` for hours after the bell, which made the whole scan one session old (now finalised from the last trade and flagged when a session is missing), and `LTIM.NS` is delisted (LTIMindtree trades as `LTM.NS`).
+
 ## Tests
 
 ```bash
 npm test             # indicators vs the StockCharts RSI reference, ATR, snapshot ratios, IST formatting, regime, demo board,
-                     # then the strategy: the six-check screen, gap-guard levels, catalyst freshness, T1/T2 exits, the Gemini prompt
+                     # then the null-close session fix and the strategy diagnostics, then the strategy: the six-check screen, gap-guard levels, catalyst freshness, T1/T2 exits, the Gemini prompt
 npm run test:live    # full live pipeline with Yahoo, Google News and Gemini mocked at the fetch layer
 npm run build && npm run test:cache
                      # real `next start` + mocked upstream: counts upstream calls across requests and a restart
